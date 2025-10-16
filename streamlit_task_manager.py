@@ -1,9 +1,8 @@
 import streamlit as st
 from datetime import datetime, timedelta
 import calendar
-# Removed: import streamlit_authenticator as stauth 
-# Removed: import yaml
-# Removed: from yaml.loader import SafeLoader
+import firebase_admin
+from firebase_admin import credentials, firestore
 
 # --- CONFIGURATION & CREDENTIALS ---
 
@@ -21,60 +20,100 @@ TASK_TYPES = ['one-time', 'daily', 'weekly', 'bi-weekly', 'monthly']
 
 def get_user_name(username):
     """Retrieves the full name of a user based on their username (which is now the owner_id)."""
-    # Assuming st.session_state.users is initialized
     user_data = st.session_state.users.get(username)
     return user_data.get('name') if user_data else f"Unknown User ({username})"
 
-# --- DATA STORAGE MOCK-UP (Need External DB for Persistence) ---
+# --- FIREBASE INITIALIZATION ---
+
+def initialize_firebase():
+    """Initializes the Firebase Admin SDK if not already done."""
+    # Check if app is already initialized to prevent errors on rerun
+    if not firebase_admin._apps:
+        try:
+            # Load service account credentials from Streamlit secrets
+            cred_dict = st.secrets["firebase_key"] 
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            st.session_state.db = firestore.client()
+        except Exception as e:
+            st.error(f"🛑 Error initializing Firebase. Have you set up the 'firebase_key' secret? Details: {e}")
+            st.stop()
+    # Ensure client is available in session state after initialization
+    if 'db' not in st.session_state:
+         st.session_state.db = firestore.client()
+
+# --- DATA STORAGE (PERSISTENT - FIRESTORE) ---
+
+# Firestore Collection and Document references
+TASK_DOC_REF = 'team_tasks/all_tasks' 
 
 def load_tasks_from_db():
-    """Mocks loading tasks from an external, persistent source (e.g., Google Sheets)."""
-    # NOTE: This is where you would call a database connector (e.g., st.connection('gSheets'))
-    # and retrieve the actual task list.
-    
-    if 'tasks_loaded' not in st.session_state:
-        st.session_state.tasks_loaded = True
-        return [
-            # Task 1 (Mustafa - username 'mustafa')
-            {
-                'id': 'mock1',
-                'title': 'Review Authentication',
-                'description': 'Test the new login system.',
-                'due_date': datetime.now().date(),
-                'type': 'one-time',
-                'owner_id': 'mustafa', 
-                'is_completed': False,
-            },
-            # Task 2 (Bob - username 'bob')
-            {
-                'id': 'mock2',
-                'title': 'Weekly Report Prep',
-                'description': 'Prepare slide deck for management.',
-                'due_date': datetime.now().date() - timedelta(days=2),
-                'type': 'weekly',
-                'owner_id': 'bob',
-                'is_completed': False,
-            },
-            # Task 3 (Charlie - username 'charlie')
-            {
-                'id': 'mock3',
-                'title': 'Clean Database',
-                'description': 'Routine maintenance.',
-                'due_date': datetime.now().date().replace(day=5),
-                'type': 'monthly',
-                'owner_id': 'charlie',
-                'is_completed': False,
-            }
-        ]
+    """Loads tasks from Firestore or initializes mock data if the document is new."""
+    if 'tasks' not in st.session_state:
+        initialize_firebase()
+        db = st.session_state.db
+        
+        try:
+            doc = db.document(TASK_DOC_REF).get()
+            
+            tasks_from_db = []
+            max_id = 0
+            
+            if doc.exists:
+                data = doc.to_dict()
+                tasks_from_db = data.get('tasks', [])
+                
+            if tasks_from_db:
+                # Process tasks loaded from Firestore
+                for task in tasks_from_db:
+                    # Convert Firestore Timestamp to Python date object
+                    if task.get('due_date') and hasattr(task['due_date'], 'date'):
+                        task['due_date'] = task['due_date'].date()
+                    
+                    # Find the highest existing task ID for the counter
+                    if task['id'].startswith('task_'):
+                        try:
+                            max_id = max(max_id, int(task['id'].split('_')[1]))
+                        except ValueError:
+                            pass
+                st.session_state.next_task_id = max_id + 1
+                return tasks_from_db
+
+            else:
+                # Document is empty or new, return initial mock data
+                st.session_state.next_task_id = 4
+                return [
+                    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, },
+                    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, },
+                    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, }
+                ]
+
+        except Exception as e:
+            st.error(f"Failed to load tasks from Firestore. Check connection: {e}")
+            st.session_state.next_task_id = 1
+            return []
+            
     return st.session_state.tasks # Return current session state if already loaded
 
 def save_tasks_to_db(tasks):
-    """Mocks saving tasks to an external, persistent source."""
-    # NOTE: This is where you would implement logic to save the updated
-    # 'tasks' list back to your database (e.g., update the Google Sheet).
-    # Since we are using Session State, we do nothing here, but in a real app,
-    # this function would contain the database WRITE operation.
-    pass
+    """Saves the entire task list back to Firestore as an array in a single document."""
+    initialize_firebase()
+    db = st.session_state.db
+    
+    # 1. Prepare data for Firestore (convert Python date objects to datetime/Timestamp)
+    data_to_save = []
+    for task in tasks:
+        task_copy = task.copy()
+        if isinstance(task_copy.get('due_date'), datetime.date):
+            # Convert Python date to datetime before saving (Firestore stores datetimes/Timestamps)
+            task_copy['due_date'] = datetime.combine(task_copy['due_date'], datetime.min.time())
+        data_to_save.append(task_copy)
+
+    # 2. Save the entire list as an array field in a single document
+    try:
+        db.document(TASK_DOC_REF).set({'tasks': data_to_save})
+    except Exception as e:
+        st.error(f"Failed to save tasks to Firestore: {e}")
 
 
 # --- DATA SETUP (Using Session State for App Run) ---
@@ -82,11 +121,10 @@ def save_tasks_to_db(tasks):
 def initialize_tasks():
     """Initializes the task list and user list in Streamlit session state."""
     
-    # Initialize the current user data from the loaded user structure
     if 'users' not in st.session_state:
         st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
         
-    # Initialize Tasks using the mock DB loader
+    # Initialize Tasks using the *actual* DB loader
     if 'tasks' not in st.session_state:
         st.session_state.tasks = load_tasks_from_db()
     
@@ -99,7 +137,8 @@ def initialize_tasks():
 
 
 # --- RECURRENCE LOGIC (Python Implementation) ---
-
+# ... (Recurrence logic remains unchanged)
+# ... (day_difference, is_task_due, get_next_occurrence functions)
 def day_difference(date1, date2):
     """Calculates the difference in days between two date objects."""
     return abs((date2 - date1).days)
@@ -346,8 +385,10 @@ def add_task_form():
                 submitted = st.form_submit_button("Save Task", type="primary")
 
                 if submitted and title:
-                    # Add task to session state
-                    new_id = f"task_{len(st.session_state.tasks) + 1}"
+                    # Use the session state counter to get a unique ID
+                    new_id = f"task_{st.session_state.next_task_id}"
+                    st.session_state.next_task_id += 1
+                    
                     st.session_state.tasks.append({
                         'id': new_id,
                         'title': title,
@@ -572,7 +613,7 @@ def main_app_content(name, username): # Removed authenticator argument
         
         # User Info (No logout button needed)
         st.info(f"**Current User:** {name} ({current_user['role'].capitalize()})")
-        st.caption("Tasks are currently saved in browser session state.")
+        st.caption("Tasks are now saved persistently in **Firestore**.")
         
         st.markdown("---")
         
