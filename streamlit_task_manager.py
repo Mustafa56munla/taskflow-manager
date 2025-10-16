@@ -68,6 +68,14 @@ def initialize_tasks():
                 'is_completed': False,
             }
         ]
+    
+    # Initialize edit state
+    if 'editing_task_id' not in st.session_state:
+        st.session_state.editing_task_id = None
+        
+    if 'edit_form_key' not in st.session_state:
+        st.session_state.edit_form_key = 0
+
 
 # --- RECURRENCE LOGIC (Python Implementation) ---
 
@@ -120,7 +128,7 @@ def get_next_occurrence(task, reference_date, days_limit=365):
 # --- UI COMPONENTS ---
 
 def task_card(task, next_due_date, current_view, on_complete=None):
-    """Displays a single task card."""
+    """Displays a single task card with actions."""
     is_recurrent = task['type'] != 'one-time'
     recurrence_text = f"Repeats {task['type'].replace('-', ' ')}" if is_recurrent else 'One-time'
     
@@ -135,7 +143,13 @@ def task_card(task, next_due_date, current_view, on_complete=None):
         card_style = "border-left: 4px solid #f87171; background-color: #fef2f2;"
         title_style = "color: #1f2937;"
 
-    col1, col2, col3 = st.columns([0.6, 0.2, 0.2])
+    # Current user context for edit/delete permissions
+    current_username = st.session_state.username
+    is_admin = st.session_state.users[current_username]['role'] == 'admin'
+    is_owner = task['owner_id'] == current_username
+    can_edit_or_delete = is_admin or is_owner
+
+    col1, col2, col3, col4 = st.columns([0.5, 0.2, 0.15, 0.15])
     
     owner_name = get_user_name(task['owner_id'])
 
@@ -148,16 +162,116 @@ def task_card(task, next_due_date, current_view, on_complete=None):
             st.markdown(f'<div style="font-weight: bold; font-size: 14px; text-align: right;">{next_due_date.strftime("%b %d")}</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size: 10px; text-align: right; color: #6b7280; text-transform: uppercase;">{recurrence_text}</div>', unsafe_allow_html=True)
 
+    # Edit Button
     with col3:
-        # Completion toggle logic: only owner can toggle, and only in Dashboard actionable views
-        if current_view != 'All My Tasks' and task['owner_id'] == st.session_state.username:
+        if can_edit_or_delete:
+            if st.button("Edit", key=f"edit_{task['id']}", help="Edit this task"):
+                st.session_state.editing_task_id = task['id']
+                st.session_state.edit_form_key += 1 # Force rerun to show modal
+                st.rerun()
+
+    # Done/Un-do or Delete Button
+    with col4:
+        if current_view != 'All My Tasks' and is_owner:
+            # Actionable view (Today/Upcoming) - show Done/Un-do
             if not task['is_completed']:
-                st.button("Done", key=f"complete_{task['id']}_{current_view}", on_click=on_complete, args=(task['id'],))
+                st.button("Done", key=f"complete_{task['id']}_{current_view}", on_click=on_complete, args=(task['id'],), type="primary")
             else:
                 st.button("Un-do", key=f"uncomplete_{task['id']}_{current_view}", on_click=on_complete, args=(task['id'],))
-
+        elif can_edit_or_delete:
+            # Non-actionable view (All Tasks) or not owner - show Delete
+            if st.button("Delete", key=f"delete_{task['id']}", help="Delete this task forever"):
+                delete_task(task['id'])
 
     st.markdown("---") # Simple separator
+
+def delete_task(task_id):
+    """Deletes a task by its ID."""
+    st.session_state.tasks = [t for t in st.session_state.tasks if t['id'] != task_id]
+    st.toast("Task deleted successfully!")
+    st.rerun()
+
+def find_task_by_id(task_id):
+    """Finds a task dictionary by its ID."""
+    return next((t for t in st.session_state.tasks if t['id'] == task_id), None)
+
+def update_task(task_id, new_data):
+    """Updates an existing task."""
+    for i, task in enumerate(st.session_state.tasks):
+        if task['id'] == task_id:
+            st.session_state.tasks[i] = {**task, **new_data}
+            st.toast(f"Task '{new_data['title']}' updated!")
+            break
+    st.session_state.editing_task_id = None
+    st.rerun()
+
+def edit_task_modal():
+    """Modal/form for editing the task selected by st.session_state.editing_task_id."""
+    task_id = st.session_state.editing_task_id
+    if not task_id:
+        return
+
+    task = find_task_by_id(task_id)
+    if not task:
+        st.session_state.editing_task_id = None
+        return
+
+    # 1. Get current user info and role for assignment control
+    current_username = st.session_state.username
+    current_user_info = st.session_state.users[current_username]
+    is_admin = current_user_info['role'] == 'admin'
+    
+    st.subheader(f"Editing Task: {task['title']}")
+    
+    with st.form(f"edit_task_form_{st.session_state.edit_form_key}", clear_on_submit=False):
+        new_title = st.text_input("Title", value=task['title'])
+        new_description = st.text_area("Description (Optional)", value=task['description'])
+        
+        # Recurrence and Date Column
+        cols = st.columns(2)
+        with cols[0]:
+            # Ensure due_date is a date object for the date_input widget
+            current_due_date = task['due_date'] if isinstance(task['due_date'], datetime) else datetime.combine(task['due_date'], datetime.min.time()).date()
+            new_due_date = st.date_input("Due/Start Date", value=current_due_date)
+        with cols[1]:
+            type_index = TASK_TYPES.index(task['type']) if task['type'] in TASK_TYPES else 0
+            new_task_type = st.selectbox("Recurrence", TASK_TYPES, index=type_index)
+        
+        # Assignment Logic
+        assignee_id = task['owner_id']
+        if is_admin:
+            # Admin can re-assign the task
+            all_usernames = list(st.session_state.users.keys())
+            all_user_names = [st.session_state.users[uname]['name'] for uname in all_usernames]
+            
+            current_assignee_name = get_user_name(assignee_id)
+            default_index = all_user_names.index(current_assignee_name) if current_assignee_name in all_user_names else 0
+            
+            selected_assignee_name = st.selectbox("Assignee (Admin Only)", all_user_names, index=default_index)
+            assignee_id = next(uname for uname, u_data in st.session_state.users.items() if u_data['name'] == selected_assignee_name)
+        else:
+            st.caption(f"Assigned to: **{get_user_name(assignee_id)}** (Only Admins can change assignment)")
+        
+        # Action Buttons
+        col_update, col_cancel = st.columns(2)
+        with col_update:
+            update_submitted = st.form_submit_button("Update Task", type="primary")
+        with col_cancel:
+            cancel_submitted = st.form_submit_button("Cancel")
+
+        if update_submitted and new_title:
+            new_data = {
+                'title': new_title,
+                'description': new_description,
+                'due_date': new_due_date,
+                'type': new_task_type,
+                'owner_id': assignee_id,
+            }
+            update_task(task_id, new_data)
+
+        if cancel_submitted:
+            st.session_state.editing_task_id = None
+            st.rerun()
 
 def add_task_form():
     """Form for adding new tasks with conditional assignment."""
@@ -167,54 +281,56 @@ def add_task_form():
     current_user_info = st.session_state.users[current_username]
     is_admin = current_user_info['role'] == 'admin'
     
-    with st.expander("➕ Add New Task"):
-        with st.form("new_task_form", clear_on_submit=True):
-            title = st.text_input("Title", key="title_input")
-            description = st.text_area("Description (Optional)", key="desc_input")
-            
-            # Recurrence and Date Column
-            cols = st.columns(2)
-            with cols[0]:
-                due_date = st.date_input("Due/Start Date", value=datetime.now().date(), key="date_input")
-            with cols[1]:
-                task_type = st.selectbox("Recurrence", TASK_TYPES, key="type_select")
-            
-            # Assignment Logic
-            if is_admin:
-                st.markdown("---")
-                # Admin can assign to any user
-                all_usernames = list(st.session_state.users.keys())
-                all_user_names = [st.session_state.users[uname]['name'] for uname in all_usernames]
+    # Only show the Add New Task expander if we are not currently editing
+    if st.session_state.editing_task_id is None:
+        with st.expander("➕ Add New Task"):
+            with st.form("new_task_form", clear_on_submit=True):
+                title = st.text_input("Title", key="title_input")
+                description = st.text_area("Description (Optional)", key="desc_input")
                 
-                # Find the current admin's full name to set as default selection
-                default_index = all_user_names.index(current_user_info['name'])
+                # Recurrence and Date Column
+                cols = st.columns(2)
+                with cols[0]:
+                    due_date = st.date_input("Due/Start Date", value=datetime.now().date(), key="date_input")
+                with cols[1]:
+                    task_type = st.selectbox("Recurrence", TASK_TYPES, key="type_select")
                 
-                selected_assignee_name = st.selectbox("Assignee (Admin Only)", all_user_names, key="assignee_select", index=default_index)
+                # Assignment Logic
+                if is_admin:
+                    st.markdown("---")
+                    # Admin can assign to any user
+                    all_usernames = list(st.session_state.users.keys())
+                    all_user_names = [st.session_state.users[uname]['name'] for uname in all_usernames]
+                    
+                    # Find the current admin's full name to set as default selection
+                    default_index = all_user_names.index(current_user_info['name'])
+                    
+                    selected_assignee_name = st.selectbox("Assignee (Admin Only)", all_user_names, key="assignee_select", index=default_index)
+                    
+                    # Reverse lookup the username from the name
+                    assignee_id = next(uname for uname, u_data in st.session_state.users.items() if u_data['name'] == selected_assignee_name)
+                else:
+                    # Normal user is assigned the task automatically
+                    assignee_id = current_username
+                    st.caption(f"Task will be assigned to: **{current_user_info['name']}**")
                 
-                # Reverse lookup the username from the name
-                assignee_id = next(uname for uname, u_data in st.session_state.users.items() if u_data['name'] == selected_assignee_name)
-            else:
-                # Normal user is assigned the task automatically
-                assignee_id = current_username
-                st.caption(f"Task will be assigned to: **{current_user_info['name']}**")
-            
-            submitted = st.form_submit_button("Save Task", type="primary")
+                submitted = st.form_submit_button("Save Task", type="primary")
 
-            if submitted and title:
-                # Add task to session state
-                new_id = f"task_{len(st.session_state.tasks) + 1}"
-                st.session_state.tasks.append({
-                    'id': new_id,
-                    'title': title,
-                    'description': description,
-                    'due_date': due_date,
-                    'type': task_type,
-                    'owner_id': assignee_id, # Use the determined assignee username
-                    'is_completed': False,
-                })
-                st.success(f"Task '{title}' added and assigned to {get_user_name(assignee_id)}!")
-            elif submitted and not title:
-                 st.error("Task title cannot be empty.")
+                if submitted and title:
+                    # Add task to session state
+                    new_id = f"task_{len(st.session_state.tasks) + 1}"
+                    st.session_state.tasks.append({
+                        'id': new_id,
+                        'title': title,
+                        'description': description,
+                        'due_date': due_date,
+                        'type': task_type,
+                        'owner_id': assignee_id, # Use the determined assignee username
+                        'is_completed': False,
+                    })
+                    st.success(f"Task '{title}' added and assigned to {get_user_name(assignee_id)}!")
+                elif submitted and not title:
+                     st.error("Task title cannot be empty.")
 
 def admin_only_user_management():
     """Admin-only interface for creating users (currently disabled in auth context)."""
@@ -276,7 +392,7 @@ def dashboard_view():
                 task['is_completed'] = not task['is_completed']
                 st.toast(f"Task '{task['title']}' updated!")
                 break
-        st.experimental_rerun() 
+        st.rerun() 
 
     # --- RENDER DASHBOARD SECTIONS ---
     
@@ -301,7 +417,9 @@ def dashboard_view():
     st.markdown("### 📝 All My Tasks")
     if all_user_tasks:
         for task in all_user_tasks:
-            task_card(task, task['next_due_date'], "All My Tasks", None) 
+            # We pass 'All My Tasks' as the current_view but still pass toggle_task_completion
+            # to task_card. The card logic handles which buttons to show.
+            task_card(task, task['next_due_date'], "All My Tasks", toggle_task_completion) 
     else:
         st.warning(f"{get_user_name(current_username)} has no tasks saved yet. Add one above!")
 
@@ -430,9 +548,12 @@ def main_app_content(name, username): # Removed authenticator argument
         # Admin User View
         admin_only_user_management()
         
-        # Removed: Password Change section
-            
     # --- MAIN CONTENT ---
+    # Show edit modal if a task is selected for editing
+    if st.session_state.editing_task_id:
+        edit_task_modal()
+        st.markdown("---")
+
     add_task_form()
     st.markdown("---")
 
