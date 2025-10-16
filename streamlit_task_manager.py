@@ -42,6 +42,7 @@ def get_user_name(username):
 def authenticate_user(email, pin):
     """Authenticates user based on email and PIN."""
     # Find user by email and check PIN
+    # FIX: st.session_state.users is now guaranteed to be the latest from Firestore
     for username, user_data in st.session_state.users.items():
         if user_data['email'].lower() == email.lower() and user_data['pin'] == pin:
             st.session_state.login_status = True
@@ -196,22 +197,28 @@ def save_tasks_to_db(tasks):
 # --- USER DATA STORAGE (FIRESTORE) ---
 
 def load_users_from_db():
-    """Loads users from Firestore. Returns (users_dict, is_mock_data_flag)."""
+    """Loads users from Firestore and stores them in session state. Returns is_mock_data_flag."""
     initialize_firebase()
     db = st.session_state.db
+    
+    is_mock_user_data = False
     
     try:
         doc = db.document(USER_DOC_REF).get()
         if doc.exists and doc.to_dict():
-            # Firestore stores the dict directly
-            return doc.to_dict().get('users', SIMPLIFIED_USER_CREDENTIALS), False
+            users_from_db = doc.to_dict().get('users', SIMPLIFIED_USER_CREDENTIALS)
+            st.session_state.users = users_from_db
         else:
-            # Document is empty or new, return initial mock data for bootstrap
-            return SIMPLIFIED_USER_CREDENTIALS, True
+            # Document is empty or new, use mock data
+            st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
+            is_mock_user_data = True
 
     except Exception as e:
         st.error(f"Failed to load users from Firestore. Defaulting to mock users. Details: {e}")
-        return SIMPLIFIED_USER_CREDENTIALS, False
+        st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
+        is_mock_user_data = False # DB failed, using mock data, but don't force save/bootstrap
+        
+    return is_mock_user_data # Return the flag
 
 def save_users_to_db(users_dict, context=""):
     """Saves the entire user dictionary back to Firestore in a single document."""
@@ -279,15 +286,14 @@ def initialize_tasks():
             save_categories_to_db(st.session_state.categories, context="initial category bootstrap")
             st.toast("Category database initialized with mock data!")
             
-    # 1. Initialize Users from DB first (MUST BE RE-LOADED on every run for fresh admin/user data)
-    # The 'users' key must be updated on every rerun to see live admin changes.
-    users_dict, is_mock_user_data = load_users_from_db()
-    st.session_state.users = users_dict
-    
-    # Bootstrap: Save the initial mock users to DB if they were just loaded
-    if is_mock_user_data:
-        # FIX: This ensures the initial mock users are written permanently to DB
-        save_users_to_db(st.session_state.users, context="initial user bootstrap")
+    # 1. Initialize Users (This is now done in main() during login. Only bootstrap/save here.)
+    if 'users' not in st.session_state or len(st.session_state.users) == 0:
+        is_mock_user_data = load_users_from_db() # Call to ensure st.session_state.users is populated
+        
+        # Bootstrap: Save the initial mock users to DB if they were just loaded
+        if is_mock_user_data:
+            # FIX: This ensures the initial mock users are written permanently to DB
+            save_users_to_db(st.session_state.users, context="initial user bootstrap")
             
     # 2. Initialize Tasks from DB (KEEP CACHED for performance)
     if 'tasks' not in st.session_state:
@@ -1177,10 +1183,8 @@ def main():
                 if login_submitted:
                     # Retrieve the values from the form inputs
                     if login_email and login_pin:
-                        # Before authenticating, ensure users are loaded from DB
-                        # This ensures new users are available for login check
-                        # Note: We must call load_users_from_db() here to guarantee
-                        # that newly added users are checked against the Firestore data.
+                        # FIX: This now ensures st.session_state.users is populated
+                        # with the latest user data from Firestore BEFORE authentication.
                         load_users_from_db() 
                         authenticate_user(login_email, login_pin)
                     else:
