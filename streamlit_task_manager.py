@@ -1,35 +1,17 @@
 import streamlit as st
 from datetime import datetime, timedelta
 import calendar
-import streamlit_authenticator as stauth # Library for login/auth
-import yaml
-from yaml.loader import SafeLoader
+# Removed: import streamlit_authenticator as stauth 
+# Removed: import yaml
+# Removed: from yaml.loader import SafeLoader
 
 # --- CONFIGURATION & CREDENTIALS ---
 
-# Hashed password for the default password 'Password123!'
-# FIX: This is a pre-generated BCrypt hash for the string 'Password123!'.
-# We hardcode this hash to bypass the startup error in the Streamlit environment.
-# Users should change this immediately after logging in.
-DEFAULT_HASH = "$2b$12$N9H0Z2V1o2h4q0C6E8F3G.78T8S9U0x1y2z3a4b5c6d7e8f9g" 
-
-# User credentials structure for the authenticator
-USER_CREDENTIALS = {
-    'credentials': {
-        'usernames': {
-            'mustafa': {'email': 'mustafa@team.com', 'name': 'Mustafa (Admin)', 'password': DEFAULT_HASH, 'role': 'admin', 'id': 'user_1'},
-            'bob': {'email': 'bob@team.com', 'name': 'Bob (Team Lead)', 'password': DEFAULT_HASH, 'role': 'user', 'id': 'user_2'},
-            'charlie': {'email': 'charlie@team.com', 'name': 'Charlie (Member)', 'password': DEFAULT_HASH, 'role': 'user', 'id': 'user_3'},
-        }
-    },
-    'cookie': {
-        'expiry_days': 30,
-        'key': 'task_manager_cookie_key',
-        'name': 'task_manager_cookie'
-    },
-    'preauthorized': {
-        'emails': []
-    }
+# Simplified User Structure
+SIMPLIFIED_USER_CREDENTIALS = {
+    'mustafa': {'email': 'mustafa@team.com', 'name': 'Mustafa (Admin)', 'role': 'admin', 'id': 'user_1'},
+    'bob': {'email': 'bob@team.com', 'name': 'Bob (Team Lead)', 'role': 'user', 'id': 'user_2'},
+    'charlie': {'email': 'charlie@team.com', 'name': 'Charlie (Member)', 'role': 'user', 'id': 'user_3'},
 }
 
 # Task Types for the UI selection
@@ -39,18 +21,18 @@ TASK_TYPES = ['one-time', 'daily', 'weekly', 'bi-weekly', 'monthly']
 
 def get_user_name(username):
     """Retrieves the full name of a user based on their username (which is now the owner_id)."""
+    # Assuming st.session_state.users is initialized
     user_data = st.session_state.users.get(username)
     return user_data.get('name') if user_data else f"Unknown User ({username})"
 
-# --- FIREBASE / DATA SETUP (Currently using Session State) ---
+# --- DATA SETUP (Currently using Session State) ---
 
 def initialize_tasks():
     """Initializes the task list and user list in Streamlit session state."""
     
-    # Initialize the current user data from the loaded USER_CREDENTIALS structure
+    # Initialize the current user data from the loaded user structure
     if 'users' not in st.session_state:
-        # Flatten the credentials structure for easier lookup (username -> data)
-        st.session_state.users = USER_CREDENTIALS['credentials']['usernames']
+        st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
         
     # Initialize Tasks
     if 'tasks' not in st.session_state:
@@ -423,12 +405,12 @@ def calendar_view():
             
 # --- MAIN APPLICATION CONTENT ---
 
-def main_app_content(name, username, authenticator):
-    """The core logic of the task manager, displayed only after successful login."""
+def main_app_content(name, username): # Removed authenticator argument
+    """The core logic of the task manager, displayed only after user selection."""
     
     st.title("TaskFlow Manager")
     
-    # Initialize data store and user state (must run after successful login)
+    # Initialize data store and user state (must run after successful selection)
     initialize_tasks()
 
     current_user = st.session_state.users[username]
@@ -439,9 +421,8 @@ def main_app_content(name, username, authenticator):
         view = st.radio("Select View", ['Dashboard', 'Calendar'])
         st.markdown("---")
         
-        # User Info and Logout
-        st.info(f"**Logged in as:** {name} ({current_user['role'].capitalize()})")
-        authenticator.logout('Logout', 'main')
+        # User Info (No logout button needed)
+        st.info(f"**Current User:** {name} ({current_user['role'].capitalize()})")
         st.caption("Tasks are currently saved in browser session state.")
         
         st.markdown("---")
@@ -449,14 +430,7 @@ def main_app_content(name, username, authenticator):
         # Admin User View
         admin_only_user_management()
         
-        # Password Change
-        with st.expander("🔑 Change Password"):
-            # We must pass the credentials dictionary to update_user_details for it to work
-            if authenticator.update_user_details(username, 'Update password'):
-                # After successful change, update the session state for immediate use 
-                # (in a real app, this would update the database/config file)
-                st.session_state.users[username]['password'] = st.session_state['new_pass_hash']
-                st.success('Password updated successfully! This change is temporary in this demo, please restart the app to revert.')
+        # Removed: Password Change section
             
     # --- MAIN CONTENT ---
     add_task_form()
@@ -470,40 +444,28 @@ def main_app_content(name, username, authenticator):
 # --- MAIN ENTRY POINT ---
 
 def main():
-    """Handles authentication and then renders the main application."""
+    """Handles user selection and then renders the main application."""
     st.set_page_config(layout="wide", page_title="TaskFlow Manager")
 
-    # Load and initialize the authenticator
-    config = USER_CREDENTIALS
-    authenticator = stauth.Authenticate(
-        config['credentials'],
-        config['cookie']['name'],
-        config['cookie']['key'],
-        config['cookie']['expiry_days']
-    )
+    # Load and initialize the simplified user structure
+    if 'users' not in st.session_state:
+        st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
 
-    # Attempt to authenticate the user
-    # FIX: Changing location from 'main' to 'sidebar' to resolve the ValueError due to
-    # deployment environment compatibility issues with streamlit-authenticator.
-    name, authentication_status, username = authenticator.login('Login', 'sidebar')
+    st.sidebar.title("TaskFlow Manager")
+    st.sidebar.markdown("---")
 
-    if authentication_status:
-        # Successful Login
-        st.session_state.username = username
-        main_app_content(name, username, authenticator)
-    elif authentication_status == False:
-        # Failed Login
-        st.error('Username/password is incorrect')
-    elif authentication_status == None:
-        # Initial State: Waiting for login
-        st.title("TaskFlow Manager - Login Required")
-        st.warning('Please use the **Login Form in the sidebar** to access the application.')
-        st.markdown("""
-        ---
-        **Demo Credentials:**
-        * **Usernames:** `mustafa` (Admin), `bob` (User), `charlie` (User)
-        * **Default Password (All):** `Password123!`
-        """)
+    user_names = [data['name'] for data in st.session_state.users.values()]
+    selected_name = st.sidebar.selectbox("Select Your User Profile", user_names, index=0)
+    
+    # Reverse lookup username (key) from selected name
+    username = next(uname for uname, data in st.session_state.users.items() if data['name'] == selected_name)
+    
+    st.session_state.username = username
+    name = selected_name
+    
+    # Direct access to app content
+    main_app_content(name, username)
+
 
 if __name__ == "__main__":
     main()
