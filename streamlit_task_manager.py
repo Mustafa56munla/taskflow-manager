@@ -19,11 +19,15 @@ SIMPLIFIED_USER_CREDENTIALS = {
 # Task Types for the UI selection
 TASK_TYPES = ['one-time', 'daily', 'weekly', 'bi-weekly', 'monthly']
 
+# Mock Category Data
+MOCK_ACCOUNTS = ['Nike', 'Adidas', 'Puma', 'General']
+MOCK_CAMPAIGNS = ['Holiday 2025', 'Q4 Launch', 'Brand Awareness']
+
 # Define the initial mock tasks outside of functions
 INITIAL_MOCK_TASKS = [
-    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, },
-    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, },
-    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, }
+    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, 'account': 'Nike', 'campaign': 'Holiday 2025' },
+    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, 'account': 'Adidas', 'campaign': 'Q4 Launch' },
+    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, 'account': 'General', 'campaign': 'Brand Awareness' }
 ]
 
 # --- HELPER FUNCTIONS ---
@@ -104,6 +108,7 @@ def initialize_firebase():
 # Firestore Collection and Document references
 TASK_DOC_REF = 'team_tasks/all_tasks' 
 USER_DOC_REF = 'user_data/all_users' # New reference for user persistence
+CATEGORY_DOC_REF = 'metadata/categories' # NEW reference for accounts/campaigns
 
 def load_tasks_from_db():
     """Loads tasks from Firestore. Returns (tasks_list, is_mock_data_flag)."""
@@ -223,12 +228,57 @@ def save_users_to_db(users_dict, context=""):
         # FIX: Provide context on failure
         st.error(f"Failed to save users to Firestore (Context: {context}): {e}")
 
+# --- CATEGORY DATA STORAGE (FIRESTORE) ---
+
+def load_categories_from_db():
+    """Loads accounts and campaigns from Firestore. Returns (categories_dict, is_mock_data_flag)."""
+    initialize_firebase()
+    db = st.session_state.db
+    
+    try:
+        doc = db.document(CATEGORY_DOC_REF).get()
+        if doc.exists and doc.to_dict():
+            return doc.to_dict(), False
+        else:
+            # Document is empty or new, return initial mock data for bootstrap
+            mock_categories = {
+                'accounts': MOCK_ACCOUNTS,
+                'campaigns': MOCK_CAMPAIGNS
+            }
+            return mock_categories, True
+
+    except Exception as e:
+        st.error(f"Failed to load categories from Firestore. Defaulting to mock categories. Details: {e}")
+        return {'accounts': MOCK_ACCOUNTS, 'campaigns': MOCK_CAMPAIGNS}, False
+
+def save_categories_to_db(categories_dict, context=""):
+    """Saves the entire categories dictionary back to Firestore."""
+    initialize_firebase()
+    db = st.session_state.db
+    
+    try:
+        db.document(CATEGORY_DOC_REF).set(categories_dict)
+        if context:
+             st.toast(f"Category data saved successfully after {context}.")
+    except Exception as e:
+        st.error(f"Failed to save categories to Firestore (Context: {context}): {e}")
+
 
 # --- DATA SETUP (Using Session State for App Run) ---
 
 def initialize_tasks():
     """Initializes the task list and user list in Streamlit session state."""
     
+    # 0. Initialize Categories first
+    if 'categories' not in st.session_state:
+        categories_dict, is_mock_category_data = load_categories_from_db()
+        st.session_state.categories = categories_dict
+
+        # Bootstrap: Save the initial mock categories to DB if they were just loaded
+        if is_mock_category_data:
+            save_categories_to_db(st.session_state.categories, context="initial category bootstrap")
+            st.toast("Category database initialized with mock data!")
+            
     # 1. Initialize Users from DB first (MUST BE RE-LOADED on every run for fresh admin/user data)
     # The 'users' key must be updated on every rerun to see live admin changes.
     users_dict, is_mock_user_data = load_users_from_db()
@@ -345,7 +395,9 @@ def task_card(task, next_due_date, current_view, on_complete=None, index=None):
 
     with col1:
         st.markdown(f'<div style="{title_style} font-weight: bold; font-size: 16px;">{task["title"]}</div>', unsafe_allow_html=True)
-        st.caption(f"Owned by: **{owner_name}** | {task['description'] if task['description'] else 'No description.'}")
+        # NEW: Display Account and Campaign
+        context_text = f"**{task.get('account', 'No Account')}** / **{task.get('campaign', 'No Campaign')}** | "
+        st.caption(f"{context_text}Owned by: **{owner_name}** | {task['description'] if task['description'] else 'No description.'}")
         
     with col2:
         if next_due_date:
@@ -429,6 +481,21 @@ def edit_task_modal():
             type_index = TASK_TYPES.index(task['type']) if task['type'] in TASK_TYPES else 0
             new_task_type = st.selectbox("Recurrence", TASK_TYPES, index=type_index)
         
+        # NEW: Account and Campaign Selection
+        st.markdown("---")
+        st.markdown("##### Project Context")
+        cols_context = st.columns(2)
+        
+        with cols_context[0]:
+            account_options = st.session_state.categories.get('accounts', [])
+            account_index = account_options.index(task['account']) if task['account'] in account_options else 0
+            new_account = st.selectbox("Account", account_options, index=account_index)
+
+        with cols_context[1]:
+            campaign_options = st.session_state.categories.get('campaigns', [])
+            campaign_index = campaign_options.index(task['campaign']) if task['campaign'] in campaign_options else 0
+            new_campaign = st.selectbox("Campaign", campaign_options, index=campaign_index)
+
         # Assignment Logic
         assignee_id = task['owner_id']
         if is_admin:
@@ -458,6 +525,9 @@ def edit_task_modal():
                 'due_date': new_due_date,
                 'type': new_task_type,
                 'owner_id': assignee_id,
+                # NEW FIELDS
+                'account': new_account,
+                'campaign': new_campaign,
             }
             update_task(task_id, new_data)
 
@@ -486,6 +556,19 @@ def add_task_form():
                     due_date = st.date_input("Due/Start Date", value=datetime.now().date(), key="date_input")
                 with cols[1]:
                     task_type = st.selectbox("Recurrence", TASK_TYPES, key="type_select")
+
+                # NEW: Account and Campaign Selection
+                st.markdown("---")
+                st.markdown("##### Project Context")
+                cols_context = st.columns(2)
+                
+                with cols_context[0]:
+                    account_options = st.session_state.categories.get('accounts', [])
+                    new_account = st.selectbox("Account", account_options, key="account_select")
+
+                with cols_context[1]:
+                    campaign_options = st.session_state.categories.get('campaigns', [])
+                    new_campaign = st.selectbox("Campaign", campaign_options, key="campaign_select")
                 
                 # Assignment Logic
                 if is_admin:
@@ -521,6 +604,9 @@ def add_task_form():
                         'type': task_type,
                         'owner_id': assignee_id, # Use the determined assignee username
                         'is_completed': False,
+                        # NEW FIELDS
+                        'account': new_account,
+                        'campaign': new_campaign,
                     })
                     save_tasks_to_db(st.session_state.tasks) # Call save after modifying
                     st.success(f"Task '{title}' added and assigned to {get_user_name(assignee_id)}!")
@@ -547,6 +633,36 @@ def admin_user_control_page():
     
     st.subheader("Current Team Members")
     st.dataframe(user_list_data, use_container_width=True)
+    
+    st.markdown("---")
+
+    # --- 0. CATEGORY MANAGEMENT ---
+    with st.expander("📁 Manage Accounts and Campaigns", expanded=False):
+        st.subheader("Edit Project Categories")
+        
+        # Edit Accounts
+        st.markdown("##### Accounts")
+        current_accounts = ", ".join(st.session_state.categories['accounts'])
+        new_accounts_str = st.text_area("Edit Accounts (Comma Separated)", value=current_accounts, key="edit_accounts_area")
+        
+        # Edit Campaigns
+        st.markdown("##### Campaigns")
+        current_campaigns = ", ".join(st.session_state.categories['campaigns'])
+        new_campaigns_str = st.text_area("Edit Campaigns (Comma Separated)", value=current_campaigns, key="edit_campaigns_area")
+        
+        if st.button("Save Categories", type="primary"):
+            # Process and clean input
+            updated_accounts = [a.strip() for a in new_accounts_str.split(',') if a.strip()]
+            updated_campaigns = [c.strip() for c in new_campaigns_str.split(',') if c.strip()]
+
+            if updated_accounts and updated_campaigns:
+                st.session_state.categories['accounts'] = updated_accounts
+                st.session_state.categories['campaigns'] = updated_campaigns
+                save_categories_to_db(st.session_state.categories, context="categories updated")
+                st.success("Accounts and Campaigns updated and saved!")
+                st.rerun()
+            else:
+                st.error("Please ensure both Accounts and Campaigns lists are not empty.")
     
     st.markdown("---")
     
@@ -979,6 +1095,8 @@ def main():
                     if login_email and login_pin:
                         # Before authenticating, ensure users are loaded from DB
                         # This ensures new users are available for login check
+                        # Note: We must call load_users_from_db() here to guarantee
+                        # that newly added users are checked against the Firestore data.
                         load_users_from_db() 
                         authenticate_user(login_email, login_pin)
                     else:
