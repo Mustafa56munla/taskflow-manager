@@ -739,25 +739,27 @@ def main():
     else:
         # If logged out, show the custom login form
         st.title("Welcome to TaskFlow Manager")
+        st.markdown("Please log in to continue using the form in the sidebar.")
         
-        st.markdown("Please log in to continue.")
-        
-        with st.form("login_form"):
-            st.sidebar.subheader("Login with Email & PIN")
-            login_email = st.sidebar.text_input("Email", key="login_email")
-            login_pin = st.sidebar.text_input("4-digit PIN", type="password", key="login_pin", max_chars=4)
-            
-            # Use columns to position the login button
-            col1, col2 = st.sidebar.columns([1, 1])
-            with col1:
-                login_submitted = st.form_submit_button("Login", type="primary")
+        with st.sidebar: # FIX: Form context is now correctly inside the sidebar
+            with st.form("login_form"):
+                st.subheader("Login with Email & PIN")
+                login_email = st.text_input("Email", key="login_email")
+                login_pin = st.text_input("4-digit PIN", type="password", key="login_pin", max_chars=4)
+                
+                # Use columns to position the login button
+                col1, col2 = st.columns([1, 1])
+                with col1:
+                    # FIX: Submit button label changed to "Sign In"
+                    login_submitted = st.form_submit_button("Sign In", type="primary") 
 
-            if login_submitted:
-                # Retrieve the values from the form inputs
-                if login_email and login_pin:
-                    authenticate_user(login_email, login_pin)
-                else:
-                    st.sidebar.error("Please enter both email and PIN.")
+                if login_submitted:
+                    # Retrieve the values from the form inputs
+                    if login_email and login_pin:
+                        authenticate_user(login_email, login_pin)
+                    else:
+                        # FIX: Error message now uses st.error within the sidebar form context
+                        st.error("Please enter both email and PIN.")
 
 if __name__ == "__main__":
     main()
