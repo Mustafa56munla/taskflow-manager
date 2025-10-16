@@ -1231,41 +1231,47 @@ def main_app_content(name, username):
     # --- MAIN CONTENT ---
     
     view_selected = st.session_state.view
-
-    if view_selected == 'Dashboard' or view_selected == 'Calendar':
-        # These views need the task/edit forms
-        
-        # Admin Category Management Form
-        category_management_form()
-        
-        # Show edit modal if a task is selected for editing
-        if st.session_state.editing_task_id:
-            edit_task_modal()
-            st.markdown("---")
-
-        add_task_form()
-        st.markdown("---")
-        
-        if view_selected == 'Dashboard':
-            dashboard_view()
-        elif view_selected == 'Calendar':
-            calendar_view()
+    
+    # Map views to functions for dictionary lookup
+    VIEWS = {
+        'Dashboard': dashboard_view,
+        'Calendar': calendar_view,
+        'User Management': admin_user_control_page
+    }
+    
+    # Determine if the current user is authorized to see the selected view
+    is_authorized = (
+        (view_selected in ['Dashboard', 'Calendar']) or
+        (view_selected == 'User Management' and current_user['role'] == 'admin')
+    )
+    
+    if is_authorized:
+        # Views requiring the forms (Dashboard/Calendar)
+        if view_selected in ['Dashboard', 'Calendar']:
+            # Admin Category Management Form
+            category_management_form()
             
-    elif view_selected == 'User Management' and current_user['role'] == 'admin':
-        admin_user_control_page()
-    
-    # Replacement for the bare 'else'
-    elif view_selected == 'User Management' and current_user['role'] != 'admin':
-        # Unauthorized access attempt (User Management for a non-admin)
-        st.error("You are not authorized to view this page.")
+            # Show edit modal if a task is selected for editing
+            if st.session_state.editing_task_id:
+                edit_task_modal()
+                st.markdown("---")
+
+            add_task_form()
+            st.markdown("---")
+            
+            # Call the specific view function
+            VIEWS[view_selected]()
+            
+        # Views not requiring the task forms (User Management)
+        elif view_selected == 'User Management':
+            VIEWS[view_selected]()
+            
+    else:
+        # Fallback for unauthorized views (e.g., non-admin selecting User Management)
+        st.error("You are not authorized to view this page. Resetting to Dashboard.")
         st.session_state.view = 'Dashboard'
         st.rerun()
-    
-    # Final, catch-all check for unknown views (this handles any other view that isn't one of the known 3)
-    elif view_selected not in ['Dashboard', 'Calendar', 'User Management']:
-        st.error("Invalid view selected. Resetting to Dashboard.")
-        st.session_state.view = 'Dashboard'
-        st.rerun()
+
 
 # --- MAIN ENTRY POINT ---
 
