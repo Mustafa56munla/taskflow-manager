@@ -37,16 +37,17 @@ def initialize_firebase():
             # Load service account credentials dictionary from Streamlit secrets
             cred_dict = st.secrets["firebase_key"] 
             
-            # --- ROBUST FIX for version incompatibility ---
-            # 1. Write the service account dictionary to a temporary JSON file.
-            # 2. Use the file path for initialization, which is the most compatible method.
-            
+            # --- FINAL ROBUST FIX ---
+            # 1. Convert the Streamlit AttrDict object to a standard Python dict
+            service_account_info = dict(cred_dict)
+
+            # 2. Write the standard dict to a temporary JSON file.
             with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
-                json.dump(cred_dict, temp_file)
+                json.dump(service_account_info, temp_file)
                 # Store the file name to delete it later
                 temp_file_name = temp_file.name
 
-            # Use the path to the temporary file for credentials.Certificate
+            # 3. Use the path to the temporary file for credentials.Certificate
             cred = credentials.Certificate(temp_file_name)
             
             firebase_admin.initialize_app(cred)
