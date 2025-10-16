@@ -229,17 +229,17 @@ def save_users_to_db(users_dict, context=""):
 def initialize_tasks():
     """Initializes the task list and user list in Streamlit session state."""
     
-    # 1. Initialize Users from DB first
-    if 'users' not in st.session_state:
-        users_dict, is_mock_user_data = load_users_from_db()
-        st.session_state.users = users_dict
-        
-        # Bootstrap: Save the initial mock users to DB if they were just loaded
-        if is_mock_user_data:
-            # FIX: Adding context to save call
-            save_users_to_db(st.session_state.users, context="initial user bootstrap")
+    # 1. Initialize Users from DB first (MUST BE RE-LOADED on every run for fresh admin/user data)
+    # The 'users' key must be updated on every rerun to see live admin changes.
+    users_dict, is_mock_user_data = load_users_from_db()
+    st.session_state.users = users_dict
+    
+    # Bootstrap: Save the initial mock users to DB if they were just loaded
+    if is_mock_user_data:
+        # FIX: This ensures the initial mock users are written permanently to DB
+        save_users_to_db(st.session_state.users, context="initial user bootstrap")
             
-    # 2. Initialize Tasks from DB
+    # 2. Initialize Tasks from DB (KEEP CACHED for performance)
     if 'tasks' not in st.session_state:
         # Load tasks and check if we are bootstrapping mock data
         tasks, is_mock_data = load_tasks_from_db()
@@ -977,9 +977,11 @@ def main():
                 if login_submitted:
                     # Retrieve the values from the form inputs
                     if login_email and login_pin:
+                        # Before authenticating, ensure users are loaded from DB
+                        # This ensures new users are available for login check
+                        load_users_from_db() 
                         authenticate_user(login_email, login_pin)
                     else:
-                        # FIX: Error message now uses st.error within the sidebar form context
                         st.error("Please enter both email and PIN.")
 
 if __name__ == "__main__":
