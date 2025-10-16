@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime, timedelta, date # FIX: Added 'date' to imports
+from datetime import datetime, timedelta, date
 import calendar
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -9,11 +9,11 @@ import os
 
 # --- CONFIGURATION & CREDENTIALS ---
 
-# Simplified User Structure
+# Simplified User Structure with Email and PIN
 SIMPLIFIED_USER_CREDENTIALS = {
-    'mustafa': {'email': 'mustafa@team.com', 'name': 'Mustafa (Admin)', 'role': 'admin', 'id': 'user_1'},
-    'bob': {'email': 'bob@team.com', 'name': 'Bob (Team Lead)', 'role': 'user', 'id': 'user_2'},
-    'charlie': {'email': 'charlie@team.com', 'name': 'Charlie (Member)', 'role': 'user', 'id': 'user_3'},
+    'mustafa': {'email': 'mustafa.munla@azurreo.com', 'name': 'Mustafa (Admin)', 'role': 'admin', 'id': 'user_1', 'pin': '1234'},
+    'bob': {'email': 'bob@team.com', 'name': 'Bob (Team Lead)', 'role': 'user', 'id': 'user_2', 'pin': '1234'},
+    'charlie': {'email': 'charlie@team.com', 'name': 'Charlie (Member)', 'role': 'user', 'id': 'user_3', 'pin': '1234'},
 }
 
 # Task Types for the UI selection
@@ -32,6 +32,29 @@ def get_user_name(username):
     """Retrieves the full name of a user based on their username (which is now the owner_id)."""
     user_data = st.session_state.users.get(username)
     return user_data.get('name') if user_data else f"Unknown User ({username})"
+
+# --- AUTHENTICATION FUNCTIONS ---
+
+def authenticate_user(email, pin):
+    """Authenticates user based on email and PIN."""
+    # Find user by email and check PIN
+    for username, user_data in st.session_state.users.items():
+        if user_data['email'].lower() == email.lower() and user_data['pin'] == pin:
+            st.session_state.login_status = True
+            st.session_state.username = username
+            st.session_state.name = user_data['name']
+            st.rerun()
+            return True
+    st.sidebar.error("Invalid email or PIN.")
+    return False
+
+def logout():
+    """Clears session state and logs the user out."""
+    st.session_state.login_status = False
+    st.session_state.username = None
+    st.session_state.name = None
+    st.rerun()
+
 
 # --- FIREBASE INITIALIZATION ---
 
@@ -459,9 +482,7 @@ def add_task_form():
                      st.error("Task title cannot be empty.")
 
 def admin_only_user_management():
-    """Admin-only interface for creating users (currently disabled in auth context)."""
-    # NOTE: In an authenticated app, user creation would typically use a registration form
-    # and save to the database. We will keep this simple for now but limit it to viewing.
+    """Admin-only interface for viewing team users."""
 
     current_user_info = st.session_state.users[st.session_state.username]
     is_admin = current_user_info['role'] == 'admin'
@@ -471,7 +492,7 @@ def admin_only_user_management():
         with st.expander("👥 View Team"):
             st.markdown("##### Current Users")
             # Convert user dictionary to a list of dicts for DataFrame display
-            user_list = [{'Username': uname, 'Name': u_data['name'], 'Role': u_data['role']} 
+            user_list = [{'Username': uname, 'Name': u_data['name'], 'Role': u_data['role'], 'Email': u_data['email'], 'PIN': u_data['pin']} 
                          for uname, u_data in st.session_state.users.items()]
             st.dataframe(user_list, use_container_width=True)
 
@@ -650,8 +671,8 @@ def calendar_view():
             
 # --- MAIN APPLICATION CONTENT ---
 
-def main_app_content(name, username): # Removed authenticator argument
-    """The core logic of the task manager, displayed only after user selection."""
+def main_app_content(name, username):
+    """The core logic of the task manager, displayed only after successful login."""
     
     st.title("TaskFlow Manager")
     
@@ -666,9 +687,14 @@ def main_app_content(name, username): # Removed authenticator argument
         view = st.radio("Select View", ['Dashboard', 'Calendar'])
         st.markdown("---")
         
-        # User Info (No logout button needed)
+        # User Info (Add logout button)
         st.info(f"**Current User:** {name} ({current_user['role'].capitalize()})")
         st.caption("Tasks are now saved persistently in **Firestore**.")
+        
+        st.markdown("---")
+        
+        # Logout Button
+        st.button("Logout", on_click=logout, type="secondary")
         
         st.markdown("---")
         
@@ -692,28 +718,46 @@ def main_app_content(name, username): # Removed authenticator argument
 # --- MAIN ENTRY POINT ---
 
 def main():
-    """Handles user selection and then renders the main application."""
+    """Handles user login and then renders the main application."""
     st.set_page_config(layout="wide", page_title="TaskFlow Manager")
 
-    # Load and initialize the simplified user structure
+    # Initialize user structure and login state
     if 'users' not in st.session_state:
         st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
+    if 'login_status' not in st.session_state:
+        st.session_state.login_status = False
+        st.session_state.username = None
+        st.session_state.name = None
 
     st.sidebar.title("TaskFlow Manager")
-    st.sidebar.markdown("---")
+    
+    if st.session_state.login_status:
+        # If logged in, proceed to main content
+        name = st.session_state.name
+        username = st.session_state.username
+        main_app_content(name, username)
+    else:
+        # If logged out, show the custom login form
+        st.title("Welcome to TaskFlow Manager")
+        
+        st.markdown("Please log in to continue.")
+        
+        with st.form("login_form"):
+            st.sidebar.subheader("Login with Email & PIN")
+            login_email = st.sidebar.text_input("Email", key="login_email")
+            login_pin = st.sidebar.text_input("4-digit PIN", type="password", key="login_pin", max_chars=4)
+            
+            # Use columns to position the login button
+            col1, col2 = st.sidebar.columns([1, 1])
+            with col1:
+                login_submitted = st.form_submit_button("Login", type="primary")
 
-    user_names = [data['name'] for data in st.session_state.users.values()]
-    selected_name = st.sidebar.selectbox("Select Your User Profile", user_names, index=0)
-    
-    # Reverse lookup username (key) from selected name
-    username = next(uname for uname, data in st.session_state.users.items() if data['name'] == selected_name)
-    
-    st.session_state.username = username
-    name = selected_name
-    
-    # Direct access to app content
-    main_app_content(name, username)
-
+            if login_submitted:
+                # Retrieve the values from the form inputs
+                if login_email and login_pin:
+                    authenticate_user(login_email, login_pin)
+                else:
+                    st.sidebar.error("Please enter both email and PIN.")
 
 if __name__ == "__main__":
     main()
