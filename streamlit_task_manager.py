@@ -133,15 +133,16 @@ def save_tasks_to_db(tasks):
         due_date_value = task_copy.get('due_date')
 
         # Robust Type Check for Saving to Firestore:
+        # FIX: Check for datetime.datetime first, then datetime.date (since date is a superclass)
         
-        # 1. Check for valid Python date object (from st.date_input, needs conversion)
-        if isinstance(due_date_value, datetime.date) and not isinstance(due_date_value, datetime):
+        # 1. Check for valid Python datetime object (from Firestore load, is fine as-is)
+        if isinstance(due_date_value, datetime):
+            task_copy['due_date'] = due_date_value
+        
+        # 2. Check for valid Python date object (from st.date_input, needs conversion to datetime)
+        elif isinstance(due_date_value, datetime.date):
             # Convert Python date (YYYY-MM-DD) to datetime (Timestamp)
             task_copy['due_date'] = datetime.combine(due_date_value, datetime.min.time())
-        
-        # 2. Check for valid Python datetime object (from Firestore load, is fine as-is)
-        elif isinstance(due_date_value, datetime):
-            task_copy['due_date'] = due_date_value
         
         # 3. Handle missing/invalid values (set to None)
         elif due_date_value is None or (isinstance(due_date_value, str) and not due_date_value):
