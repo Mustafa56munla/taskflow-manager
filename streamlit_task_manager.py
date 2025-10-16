@@ -483,8 +483,9 @@ def main():
     )
 
     # Attempt to authenticate the user
-    # FIX: Reverting to positional arguments for compatibility with strict library versions.
-    name, authentication_status, username = authenticator.login('Login', 'main')
+    # FIX: Changing location from 'main' to 'sidebar' to resolve the ValueError due to
+    # deployment environment compatibility issues with streamlit-authenticator.
+    name, authentication_status, username = authenticator.login('Login', 'sidebar')
 
     if authentication_status:
         # Successful Login
@@ -495,8 +496,8 @@ def main():
         st.error('Username/password is incorrect')
     elif authentication_status == None:
         # Initial State: Waiting for login
-        st.title("TaskFlow Manager - Login")
-        st.warning('Please enter your username and password.')
+        st.title("TaskFlow Manager - Login Required")
+        st.warning('Please use the **Login Form in the sidebar** to access the application.')
         st.markdown("""
         ---
         **Demo Credentials:**
