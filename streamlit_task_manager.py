@@ -1230,11 +1230,13 @@ def main_app_content(name, username):
         
     # --- MAIN CONTENT ---
     
-    if st.session_state.view == 'Dashboard' or st.session_state.view == 'Calendar':
+    view_selected = st.session_state.view
+
+    if view_selected == 'Dashboard' or view_selected == 'Calendar':
         # These views need the task/edit forms
         
         # Admin Category Management Form
-        category_management_form() # NEW CALL HERE
+        category_management_form()
         
         # Show edit modal if a task is selected for editing
         if st.session_state.editing_task_id:
@@ -1244,16 +1246,24 @@ def main_app_content(name, username):
         add_task_form()
         st.markdown("---")
         
-        if st.session_state.view == 'Dashboard':
+        if view_selected == 'Dashboard':
             dashboard_view()
-        elif st.session_state.view == 'Calendar':
+        elif view_selected == 'Calendar':
             calendar_view()
             
-    elif st.session_state.view == 'User Management' and current_user['role'] == 'admin':
+    elif view_selected == 'User Management' and current_user['role'] == 'admin':
         admin_user_control_page()
-    else:
-        # Fallback if a user somehow ends up on an unauthorized view
+    
+    # Replacement for the bare 'else'
+    elif view_selected == 'User Management' and current_user['role'] != 'admin':
+        # Unauthorized access attempt (User Management for a non-admin)
         st.error("You are not authorized to view this page.")
+        st.session_state.view = 'Dashboard'
+        st.rerun()
+    
+    # Final, catch-all check for unknown views (this handles any other view that isn't one of the known 3)
+    elif view_selected not in ['Dashboard', 'Calendar', 'User Management']:
+        st.error("Invalid view selected. Resetting to Dashboard.")
         st.session_state.view = 'Dashboard'
         st.rerun()
 
