@@ -50,6 +50,8 @@ def authenticate_user(email, pin):
 
 def logout():
     """Clears session state and logs the user out."""
+    # Note: Streamlit session state (st.session_state) should persist across soft reruns.
+    # Clearing it here and rerunning is the correct way to log out.
     st.session_state.login_status = False
     st.session_state.username = None
     st.session_state.name = None
@@ -182,6 +184,7 @@ def save_tasks_to_db(tasks):
     # 2. Save the entire list as an array field in a single document
     try:
         db.document(TASK_DOC_REF).set({'tasks': data_to_save})
+        # Note: No specific success toast here as it fires frequently
     except Exception as e:
         st.error(f"Failed to save tasks to Firestore: {e}")
 
@@ -205,7 +208,7 @@ def load_users_from_db():
         st.error(f"Failed to load users from Firestore. Defaulting to mock users. Details: {e}")
         return SIMPLIFIED_USER_CREDENTIALS, False
 
-def save_users_to_db(users_dict):
+def save_users_to_db(users_dict, context=""):
     """Saves the entire user dictionary back to Firestore in a single document."""
     initialize_firebase()
     db = st.session_state.db
@@ -213,8 +216,12 @@ def save_users_to_db(users_dict):
     try:
         # Save the whole dictionary under the 'users' field
         db.document(USER_DOC_REF).set({'users': users_dict})
+        # FIX: Adding success logging to confirm write operation
+        if context:
+             st.toast(f"User data saved successfully after {context}.")
     except Exception as e:
-        st.error(f"Failed to save users to Firestore: {e}")
+        # FIX: Provide context on failure
+        st.error(f"Failed to save users to Firestore (Context: {context}): {e}")
 
 
 # --- DATA SETUP (Using Session State for App Run) ---
@@ -229,8 +236,8 @@ def initialize_tasks():
         
         # Bootstrap: Save the initial mock users to DB if they were just loaded
         if is_mock_user_data:
-            save_users_to_db(st.session_state.users)
-            st.toast("User database initialized with mock users!")
+            # FIX: Adding context to save call
+            save_users_to_db(st.session_state.users, context="initial user bootstrap")
             
     # 2. Initialize Tasks from DB
     if 'tasks' not in st.session_state:
@@ -575,7 +582,8 @@ def admin_user_control_page():
                         'id': new_user_id,
                         'pin': new_pin
                     }
-                    save_users_to_db(st.session_state.users)
+                    # FIX: Adding context to save call
+                    save_users_to_db(st.session_state.users, context="new user added")
                     st.success(f"User '{new_name}' ({new_username}) added successfully!")
                     st.rerun()
 
@@ -635,7 +643,8 @@ def admin_user_control_page():
                         'role': edited_role,
                         'pin': edited_pin
                     })
-                    save_users_to_db(st.session_state.users)
+                    # FIX: Adding context to save call
+                    save_users_to_db(st.session_state.users, context="user details updated")
                     st.success(f"User '{edited_name}' updated successfully!")
                     st.rerun()
             
@@ -647,7 +656,7 @@ def admin_user_control_page():
                     del st.session_state.users[user_to_edit_username]
                     
                     # Also re-assign any tasks owned by the deleted user to the Admin
-                    admin_username = 'mustafa' # Fallback to a defined admin account
+                    admin_username = st.session_state.username # Safer: Re-assign to currently logged-in Admin
                     tasks_reassigned = 0
                     for task in st.session_state.tasks:
                         if task['owner_id'] == user_to_edit_username:
@@ -655,7 +664,7 @@ def admin_user_control_page():
                             tasks_reassigned += 1
                             
                     # Save both changes
-                    save_users_to_db(st.session_state.users)
+                    save_users_to_db(st.session_state.users, context="user deleted") # FIX: Adding context
                     save_tasks_to_db(st.session_state.tasks)
                     st.success(f"User '{user_to_edit_name}' deleted. {tasks_reassigned} tasks reassigned to {get_user_name(admin_username)}.")
                     st.rerun()
@@ -936,18 +945,20 @@ def main():
         st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
     if 'login_status' not in st.session_state:
         st.session_state.login_status = False
+    if 'username' not in st.session_state:
         st.session_state.username = None
+    if 'name' not in st.session_state:
         st.session_state.name = None
     
     st.sidebar.title("TaskFlow Manager")
     
-    if st.session_state.login_status:
-        # If logged in, proceed to main content
+    if st.session_state.login_status and st.session_state.username and st.session_state.username in st.session_state.users:
+        # If logged in and user exists (session state is intact), proceed to main content
         name = st.session_state.name
         username = st.session_state.username
         main_app_content(name, username)
     else:
-        # If logged out, show the custom login form
+        # If logged out or session state lost, show the custom login form
         st.title("Welcome to TaskFlow Manager")
         st.markdown("Please log in to continue using the form in the sidebar.")
         
