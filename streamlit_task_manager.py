@@ -1239,38 +1239,31 @@ def main_app_content(name, username):
         'User Management': admin_user_control_page
     }
     
-    # Determine if the current user is authorized to see the selected view
-    is_authorized = (
-        (view_selected in ['Dashboard', 'Calendar']) or
-        (view_selected == 'User Management' and current_user['role'] == 'admin')
-    )
+    # --- 1. AUTHORIZATION GATE ---
+    is_admin = current_user['role'] == 'admin'
     
-    if is_authorized:
-        # Views requiring the forms (Dashboard/Calendar)
-        if view_selected in ['Dashboard', 'Calendar']:
-            # Admin Category Management Form
-            category_management_form()
-            
-            # Show edit modal if a task is selected for editing
-            if st.session_state.editing_task_id:
-                edit_task_modal()
-                st.markdown("---")
-
-            add_task_form()
-            st.markdown("---")
-            
-            # Call the specific view function
-            VIEWS[view_selected]()
-            
-        # Views not requiring the task forms (User Management)
-        elif view_selected == 'User Management':
-            VIEWS[view_selected]()
-            
-    else:
-        # Fallback for unauthorized views (e.g., non-admin selecting User Management)
-        st.error("You are not authorized to view this page. Resetting to Dashboard.")
+    if view_selected == 'User Management' and not is_admin:
+        st.error("You are not authorized to view User Management. Resetting to Dashboard.")
         st.session_state.view = 'Dashboard'
-        st.rerun()
+        st.rerun() # Exit the script run
+
+    # --- 2. RENDER FORMS (Conditional on Dashboard/Calendar views) ---
+    if view_selected in ['Dashboard', 'Calendar']:
+        if is_admin:
+            category_management_form()
+        
+        if st.session_state.editing_task_id:
+            edit_task_modal()
+            st.markdown("---")
+        
+        add_task_form()
+        st.markdown("---")
+
+    # --- 3. RENDER MAIN VIEW (Safe Dictionary Lookup) ---
+    # We are guaranteed to be authorized at this point (or redirected), so just execute the view.
+    if view_selected in VIEWS:
+        VIEWS[view_selected]()
+    # No 'else' needed here, eliminating the syntax error source.
 
 
 # --- MAIN ENTRY POINT ---
