@@ -19,6 +19,13 @@ SIMPLIFIED_USER_CREDENTIALS = {
 # Task Types for the UI selection
 TASK_TYPES = ['one-time', 'daily', 'weekly', 'bi-weekly', 'monthly']
 
+# Define the initial mock tasks outside of functions
+INITIAL_MOCK_TASKS = [
+    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, },
+    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, },
+    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, }
+]
+
 # --- HELPER FUNCTIONS ---
 
 def get_user_name(username):
@@ -73,52 +80,45 @@ def initialize_firebase():
 TASK_DOC_REF = 'team_tasks/all_tasks' 
 
 def load_tasks_from_db():
-    """Loads tasks from Firestore or initializes mock data if the document is new."""
-    if 'tasks' not in st.session_state:
-        initialize_firebase()
-        db = st.session_state.db
+    """Loads tasks from Firestore. Returns (tasks_list, is_mock_data_flag)."""
+    initialize_firebase()
+    db = st.session_state.db
+    
+    try:
+        doc = db.document(TASK_DOC_REF).get()
         
-        try:
-            doc = db.document(TASK_DOC_REF).get()
+        tasks_from_db = []
+        max_id = 0
+        
+        if doc.exists:
+            data = doc.to_dict()
+            tasks_from_db = data.get('tasks', [])
             
-            tasks_from_db = []
-            max_id = 0
-            
-            if doc.exists:
-                data = doc.to_dict()
-                tasks_from_db = data.get('tasks', [])
+        if tasks_from_db:
+            # Process tasks loaded from Firestore
+            for task in tasks_from_db:
+                # Convert Firestore Timestamp (datetime.datetime) to Python date object
+                if task.get('due_date') and hasattr(task['due_date'], 'date'):
+                    task['due_date'] = task['due_date'].date()
                 
-            if tasks_from_db:
-                # Process tasks loaded from Firestore
-                for task in tasks_from_db:
-                    # Convert Firestore Timestamp (datetime.datetime) to Python date object
-                    if task.get('due_date') and hasattr(task['due_date'], 'date'):
-                        task['due_date'] = task['due_date'].date()
-                    
-                    # Find the highest existing task ID for the counter
-                    if task['id'].startswith('task_'):
-                        try:
-                            max_id = max(max_id, int(task['id'].split('_')[1]))
-                        except ValueError:
-                            pass
-                st.session_state.next_task_id = max_id + 1
-                return tasks_from_db
+                # Find the highest existing task ID for the counter
+                if task['id'].startswith('task_'):
+                    try:
+                        max_id = max(max_id, int(task['id'].split('_')[1]))
+                    except ValueError:
+                        pass
+            st.session_state.next_task_id = max_id + 1
+            return tasks_from_db, False # Data loaded successfully
 
-            else:
-                # Document is empty or new, return initial mock data
-                st.session_state.next_task_id = 4
-                return [
-                    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, },
-                    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, },
-                    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, }
-                ]
+        else:
+            # Document is empty or new, return initial mock data for bootstrap
+            st.session_state.next_task_id = 4
+            return INITIAL_MOCK_TASKS, True # Returning mock data, need to save it
 
-        except Exception as e:
-            st.error(f"Failed to load tasks from Firestore. Check connection: {e}")
-            st.session_state.next_task_id = 1
-            return []
-            
-    return st.session_state.tasks # Return current session state if already loaded
+    except Exception as e:
+        st.error(f"Failed to load tasks from Firestore. Check connection: {e}")
+        st.session_state.next_task_id = 1
+        return [], False # Return empty list on failure
 
 def save_tasks_to_db(tasks):
     """Saves the entire task list back to Firestore as an array in a single document."""
@@ -171,7 +171,14 @@ def initialize_tasks():
         
     # Initialize Tasks using the *actual* DB loader
     if 'tasks' not in st.session_state:
-        st.session_state.tasks = load_tasks_from_db()
+        # Load tasks and check if we are bootstrapping mock data
+        tasks, is_mock_data = load_tasks_from_db()
+        st.session_state.tasks = tasks
+        
+        # FIX: Bootstrap the database by saving the mock data immediately on the very first load
+        if is_mock_data:
+            save_tasks_to_db(st.session_state.tasks)
+            st.toast("Database initialized with mock tasks!")
     
     # Initialize edit state
     if 'editing_task_id' not in st.session_state:
