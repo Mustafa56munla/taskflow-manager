@@ -25,18 +25,16 @@ def get_user_name(username):
     user_data = st.session_state.users.get(username)
     return user_data.get('name') if user_data else f"Unknown User ({username})"
 
-# --- DATA SETUP (Currently using Session State) ---
+# --- DATA STORAGE MOCK-UP (Need External DB for Persistence) ---
 
-def initialize_tasks():
-    """Initializes the task list and user list in Streamlit session state."""
+def load_tasks_from_db():
+    """Mocks loading tasks from an external, persistent source (e.g., Google Sheets)."""
+    # NOTE: This is where you would call a database connector (e.g., st.connection('gSheets'))
+    # and retrieve the actual task list.
     
-    # Initialize the current user data from the loaded user structure
-    if 'users' not in st.session_state:
-        st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
-        
-    # Initialize Tasks
-    if 'tasks' not in st.session_state:
-        st.session_state.tasks = [
+    if 'tasks_loaded' not in st.session_state:
+        st.session_state.tasks_loaded = True
+        return [
             # Task 1 (Mustafa - username 'mustafa')
             {
                 'id': 'mock1',
@@ -68,6 +66,29 @@ def initialize_tasks():
                 'is_completed': False,
             }
         ]
+    return st.session_state.tasks # Return current session state if already loaded
+
+def save_tasks_to_db(tasks):
+    """Mocks saving tasks to an external, persistent source."""
+    # NOTE: This is where you would implement logic to save the updated
+    # 'tasks' list back to your database (e.g., update the Google Sheet).
+    # Since we are using Session State, we do nothing here, but in a real app,
+    # this function would contain the database WRITE operation.
+    pass
+
+
+# --- DATA SETUP (Using Session State for App Run) ---
+
+def initialize_tasks():
+    """Initializes the task list and user list in Streamlit session state."""
+    
+    # Initialize the current user data from the loaded user structure
+    if 'users' not in st.session_state:
+        st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
+        
+    # Initialize Tasks using the mock DB loader
+    if 'tasks' not in st.session_state:
+        st.session_state.tasks = load_tasks_from_db()
     
     # Initialize edit state
     if 'editing_task_id' not in st.session_state:
@@ -127,8 +148,11 @@ def get_next_occurrence(task, reference_date, days_limit=365):
 
 # --- UI COMPONENTS ---
 
-def task_card(task, next_due_date, current_view, on_complete=None):
-    """Displays a single task card with actions."""
+def task_card(task, next_due_date, current_view, on_complete=None, index=None):
+    """
+    Displays a single task card with actions. 
+    'index' is crucial for fixing the Duplicate Element Key error.
+    """
     is_recurrent = task['type'] != 'one-time'
     recurrence_text = f"Repeats {task['type'].replace('-', ' ')}" if is_recurrent else 'One-time'
     
@@ -149,6 +173,9 @@ def task_card(task, next_due_date, current_view, on_complete=None):
     is_owner = task['owner_id'] == current_username
     can_edit_or_delete = is_admin or is_owner
 
+    # Use index to make key absolutely unique in this specific view/loop
+    unique_key_suffix = f"{task['id']}_{current_view}_{index if index is not None else ''}"
+
     col1, col2, col3, col4 = st.columns([0.5, 0.2, 0.15, 0.15])
     
     owner_name = get_user_name(task['owner_id'])
@@ -162,25 +189,25 @@ def task_card(task, next_due_date, current_view, on_complete=None):
             st.markdown(f'<div style="font-weight: bold; font-size: 14px; text-align: right;">{next_due_date.strftime("%b %d")}</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size: 10px; text-align: right; color: #6b7280; text-transform: uppercase;">{recurrence_text}</div>', unsafe_allow_html=True)
 
-    # Edit Button (FIXED: Added current_view to the key to prevent duplicates)
+    # Edit Button (Using the ultra-unique key suffix)
     with col3:
         if can_edit_or_delete:
-            if st.button("Edit", key=f"edit_{task['id']}_{current_view}", help="Edit this task"):
+            if st.button("Edit", key=f"edit_{unique_key_suffix}", help="Edit this task"):
                 st.session_state.editing_task_id = task['id']
-                st.session_state.edit_form_key += 1 # Force rerun to show modal
+                st.session_state.edit_form_key += 1 
                 st.rerun()
 
-    # Done/Un-do or Delete Button (FIXED: Added current_view to the key for Delete button)
+    # Done/Un-do or Delete Button (Using the ultra-unique key suffix)
     with col4:
         if current_view != 'All My Tasks' and is_owner:
             # Actionable view (Today/Upcoming) - show Done/Un-do
             if not task['is_completed']:
-                st.button("Done", key=f"complete_{task['id']}_{current_view}", on_click=on_complete, args=(task['id'],), type="primary")
+                st.button("Done", key=f"complete_{unique_key_suffix}", on_click=on_complete, args=(task['id'],), type="primary")
             else:
-                st.button("Un-do", key=f"uncomplete_{task['id']}_{current_view}", on_click=on_complete, args=(task['id'],))
+                st.button("Un-do", key=f"uncomplete_{unique_key_suffix}", on_click=on_complete, args=(task['id'],))
         elif can_edit_or_delete:
             # Non-actionable view (All Tasks) or not owner - show Delete
-            if st.button("Delete", key=f"delete_{task['id']}_{current_view}", help="Delete this task forever"):
+            if st.button("Delete", key=f"delete_{unique_key_suffix}", help="Delete this task forever"):
                 delete_task(task['id'])
 
     st.markdown("---") # Simple separator
@@ -188,6 +215,7 @@ def task_card(task, next_due_date, current_view, on_complete=None):
 def delete_task(task_id):
     """Deletes a task by its ID."""
     st.session_state.tasks = [t for t in st.session_state.tasks if t['id'] != task_id]
+    save_tasks_to_db(st.session_state.tasks) # Call save after modifying
     st.toast("Task deleted successfully!")
     st.rerun()
 
@@ -202,6 +230,7 @@ def update_task(task_id, new_data):
             st.session_state.tasks[i] = {**task, **new_data}
             st.toast(f"Task '{new_data['title']}' updated!")
             break
+    save_tasks_to_db(st.session_state.tasks) # Call save after modifying
     st.session_state.editing_task_id = None
     st.rerun()
 
@@ -328,6 +357,7 @@ def add_task_form():
                         'owner_id': assignee_id, # Use the determined assignee username
                         'is_completed': False,
                     })
+                    save_tasks_to_db(st.session_state.tasks) # Call save after modifying
                     st.success(f"Task '{title}' added and assigned to {get_user_name(assignee_id)}!")
                 elif submitted and not title:
                      st.error("Task title cannot be empty.")
@@ -392,14 +422,15 @@ def dashboard_view():
                 task['is_completed'] = not task['is_completed']
                 st.toast(f"Task '{task['title']}' updated!")
                 break
+        save_tasks_to_db(st.session_state.tasks) # Call save after modifying
         st.rerun() 
 
     # --- RENDER DASHBOARD SECTIONS ---
     
     st.markdown("### 🎯 Tasks Due Today")
     if tasks_due_today:
-        for task in tasks_due_today:
-            task_card(task, task['next_due_date'], "Today", toggle_task_completion)
+        for index, task in enumerate(tasks_due_today):
+            task_card(task, task['next_due_date'], "Today", toggle_task_completion, index=index)
     else:
         st.info(f"Nothing due today for {get_user_name(current_username)}! 🎉")
 
@@ -407,8 +438,8 @@ def dashboard_view():
 
     st.markdown("### 🗓️ Upcoming Tasks (Next 7 Days)")
     if upcoming_tasks:
-        for task in upcoming_tasks:
-            task_card(task, task['next_due_date'], "Upcoming", toggle_task_completion)
+        for index, task in enumerate(upcoming_tasks):
+            task_card(task, task['next_due_date'], "Upcoming", toggle_task_completion, index=index)
     else:
         st.info(f"No upcoming tasks this week for {get_user_name(current_username)}.")
 
@@ -416,10 +447,10 @@ def dashboard_view():
     
     st.markdown("### 📝 All My Tasks")
     if all_user_tasks:
-        for task in all_user_tasks:
+        for index, task in enumerate(all_user_tasks):
             # We pass 'All My Tasks' as the current_view but still pass toggle_task_completion
             # to task_card. The card logic handles which buttons to show.
-            task_card(task, task['next_due_date'], "All My Tasks", toggle_task_completion) 
+            task_card(task, task['next_due_date'], "All My Tasks", toggle_task_completion, index=index) 
     else:
         st.warning(f"{get_user_name(current_username)} has no tasks saved yet. Add one above!")
 
