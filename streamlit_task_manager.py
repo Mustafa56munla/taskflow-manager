@@ -37,7 +37,7 @@ def initialize_firebase():
             # Load service account credentials dictionary from Streamlit secrets
             cred_dict = st.secrets["firebase_key"] 
             
-            # --- FINAL ROBUST FIX ---
+            # --- FINAL ROBUST FIX (Temporary File Method) ---
             # 1. Convert the Streamlit AttrDict object to a standard Python dict
             service_account_info = dict(cred_dict)
 
@@ -91,7 +91,7 @@ def load_tasks_from_db():
             if tasks_from_db:
                 # Process tasks loaded from Firestore
                 for task in tasks_from_db:
-                    # Convert Firestore Timestamp to Python date object
+                    # Convert Firestore Timestamp (datetime.datetime) to Python date object
                     if task.get('due_date') and hasattr(task['due_date'], 'date'):
                         task['due_date'] = task['due_date'].date()
                     
@@ -130,16 +130,27 @@ def save_tasks_to_db(tasks):
     for task in tasks:
         task_copy = task.copy()
         
-        # FIX: Ensure due_date is a valid date object before attempting conversion.
         due_date_value = task_copy.get('due_date')
 
-        if isinstance(due_date_value, datetime.date):
-            # Convert Python date to datetime before saving (Firestore stores datetimes/Timestamps)
+        # Robust Type Check for Saving to Firestore:
+        
+        # 1. Check for valid Python date object (from st.date_input, needs conversion)
+        if isinstance(due_date_value, datetime.date) and not isinstance(due_date_value, datetime):
+            # Convert Python date (YYYY-MM-DD) to datetime (Timestamp)
             task_copy['due_date'] = datetime.combine(due_date_value, datetime.min.time())
+        
+        # 2. Check for valid Python datetime object (from Firestore load, is fine as-is)
+        elif isinstance(due_date_value, datetime):
+            task_copy['due_date'] = due_date_value
+        
+        # 3. Handle missing/invalid values (set to None)
         elif due_date_value is None or (isinstance(due_date_value, str) and not due_date_value):
-             # If due_date is None or an empty string, set it to None for Firestore
              task_copy['due_date'] = None
-        # If it's already a Timestamp or datetime, it passes through.
+        
+        # 4. Catch-all: If it's none of the above, it's corrupt data; set to None.
+        else:
+            task_copy['due_date'] = None
+            st.warning(f"Date for task {task_copy.get('id')} was corrupt ({type(due_date_value)}). Resetting to None before save.")
         
         data_to_save.append(task_copy)
 
