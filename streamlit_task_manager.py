@@ -893,6 +893,16 @@ def dashboard_view():
                 options=['Due Date', 'Title'],
                 key='dash_sort_select'
             )
+        
+    else:
+        # Default filters if no categories exist
+        selected_accounts = st.session_state.categories.get('accounts', [])
+        selected_campaigns = st.session_state.categories.get('campaigns', [])
+        selected_statuses = [False]
+        selected_owners = [current_username]
+        sort_by = 'Due Date' # Default sort
+
+    # --- End Filter Widgets ---
     
     # --- 2. Apply Filters ---
     
@@ -1253,6 +1263,7 @@ def main_app_content(name, username):
     # We are guaranteed to be authorized at this point (or redirected), so just execute the view.
     if view_selected in VIEWS:
         VIEWS[view_selected]()
+    # No 'else' needed here, eliminating the syntax error source.
 
 
 # --- MAIN ENTRY POINT ---
