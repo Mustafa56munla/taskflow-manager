@@ -9,7 +9,7 @@ import os
 
 # --- CONFIGURATION & CREDENTIALS ---
 
-# Simplified User Structure with Email and PIN
+# Simplified User Structure with Email and PIN (Used only for initial DB bootstrap)
 SIMPLIFIED_USER_CREDENTIALS = {
     'mustafa': {'email': 'mustafa.munla@azurreo.com', 'name': 'Mustafa (Admin)', 'role': 'admin', 'id': 'user_1', 'pin': '1234'},
     'bob': {'email': 'bob@team.com', 'name': 'Bob (Team Lead)', 'role': 'user', 'id': 'user_2', 'pin': '1234'},
@@ -101,6 +101,7 @@ def initialize_firebase():
 
 # Firestore Collection and Document references
 TASK_DOC_REF = 'team_tasks/all_tasks' 
+USER_DOC_REF = 'user_data/all_users' # New reference for user persistence
 
 def load_tasks_from_db():
     """Loads tasks from Firestore. Returns (tasks_list, is_mock_data_flag)."""
@@ -184,16 +185,54 @@ def save_tasks_to_db(tasks):
     except Exception as e:
         st.error(f"Failed to save tasks to Firestore: {e}")
 
+# --- USER DATA STORAGE (FIRESTORE) ---
+
+def load_users_from_db():
+    """Loads users from Firestore. Returns (users_dict, is_mock_data_flag)."""
+    initialize_firebase()
+    db = st.session_state.db
+    
+    try:
+        doc = db.document(USER_DOC_REF).get()
+        if doc.exists and doc.to_dict():
+            # Firestore stores the dict directly
+            return doc.to_dict().get('users', SIMPLIFIED_USER_CREDENTIALS), False
+        else:
+            # Document is empty or new, return initial mock data for bootstrap
+            return SIMPLIFIED_USER_CREDENTIALS, True
+
+    except Exception as e:
+        st.error(f"Failed to load users from Firestore. Defaulting to mock users. Details: {e}")
+        return SIMPLIFIED_USER_CREDENTIALS, False
+
+def save_users_to_db(users_dict):
+    """Saves the entire user dictionary back to Firestore in a single document."""
+    initialize_firebase()
+    db = st.session_state.db
+    
+    try:
+        # Save the whole dictionary under the 'users' field
+        db.document(USER_DOC_REF).set({'users': users_dict})
+    except Exception as e:
+        st.error(f"Failed to save users to Firestore: {e}")
+
 
 # --- DATA SETUP (Using Session State for App Run) ---
 
 def initialize_tasks():
     """Initializes the task list and user list in Streamlit session state."""
     
+    # 1. Initialize Users from DB first
     if 'users' not in st.session_state:
-        st.session_state.users = SIMPLIFIED_USER_CREDENTIALS
+        users_dict, is_mock_user_data = load_users_from_db()
+        st.session_state.users = users_dict
         
-    # Initialize Tasks using the *actual* DB loader
+        # Bootstrap: Save the initial mock users to DB if they were just loaded
+        if is_mock_user_data:
+            save_users_to_db(st.session_state.users)
+            st.toast("User database initialized with mock users!")
+            
+    # 2. Initialize Tasks from DB
     if 'tasks' not in st.session_state:
         # Load tasks and check if we are bootstrapping mock data
         tasks, is_mock_data = load_tasks_from_db()
@@ -202,7 +241,7 @@ def initialize_tasks():
         # FIX: Bootstrap the database by saving the mock data immediately on the very first load
         if is_mock_data:
             save_tasks_to_db(st.session_state.tasks)
-            st.toast("Database initialized with mock tasks!")
+            st.toast("Task database initialized with mock tasks!")
     
     # Initialize edit state
     if 'editing_task_id' not in st.session_state:
@@ -481,20 +520,138 @@ def add_task_form():
                 elif submitted and not title:
                      st.error("Task title cannot be empty.")
 
-def admin_only_user_management():
-    """Admin-only interface for viewing team users."""
+# --- ADMIN USER CONTROL PAGE ---
 
-    current_user_info = st.session_state.users[st.session_state.username]
-    is_admin = current_user_info['role'] == 'admin'
+def admin_user_control_page():
+    """Admin interface for managing users: CRUD operations and role/pin changes."""
+    st.title("👤 User Management (Admin Only)")
+    
+    # List all users
+    user_list_data = []
+    for uname, u_data in st.session_state.users.items():
+        user_list_data.append({
+            'Username': uname,
+            'Name': u_data['name'],
+            'Email': u_data['email'],
+            'Role': u_data['role'],
+            'PIN': u_data['pin'],
+            'ID': u_data['id']
+        })
+    
+    st.subheader("Current Team Members")
+    st.dataframe(user_list_data, use_container_width=True)
+    
+    st.markdown("---")
+    
+    # --- 1. ADD NEW USER FORM ---
+    with st.expander("➕ Add New User", expanded=False):
+        with st.form("add_user_form", clear_on_submit=True):
+            st.subheader("Create New User")
+            new_username = st.text_input("Username (must be unique)", key="new_username_input").lower()
+            new_name = st.text_input("Display Name", key="new_name_input")
+            new_email = st.text_input("Email", key="new_email_input").lower()
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                new_pin = st.text_input("4-digit PIN (Default: 1234)", type="password", max_chars=4, key="new_pin_input", value="1234")
+            with col2:
+                new_role = st.selectbox("Role", ['user', 'admin'], key="new_role_select")
 
-    if is_admin:
-        st.header("Admin Tools")
-        with st.expander("👥 View Team"):
-            st.markdown("##### Current Users")
-            # Convert user dictionary to a list of dicts for DataFrame display
-            user_list = [{'Username': uname, 'Name': u_data['name'], 'Role': u_data['role'], 'Email': u_data['email'], 'PIN': u_data['pin']} 
-                         for uname, u_data in st.session_state.users.items()]
-            st.dataframe(user_list, use_container_width=True)
+            add_submitted = st.form_submit_button("Add User", type="primary")
+
+            if add_submitted:
+                if new_username in st.session_state.users:
+                    st.error("Error: Username already exists.")
+                elif not new_username or not new_name or not new_email or len(new_pin) != 4:
+                    st.error("Error: All fields are required, and PIN must be 4 digits.")
+                else:
+                    # Simple unique ID generation
+                    new_user_id = f"user_{len(st.session_state.users) + 10}" 
+                    
+                    st.session_state.users[new_username] = {
+                        'email': new_email,
+                        'name': new_name,
+                        'role': new_role,
+                        'id': new_user_id,
+                        'pin': new_pin
+                    }
+                    save_users_to_db(st.session_state.users)
+                    st.success(f"User '{new_name}' ({new_username}) added successfully!")
+                    st.rerun()
+
+    st.markdown("---")
+
+    # --- 2. EDIT/DELETE EXISTING USER FORM ---
+    if st.session_state.users:
+        
+        user_to_edit_name = st.selectbox("Select User to Edit or Delete", [u['name'] for u in st.session_state.users.values()])
+        user_to_edit_username = next(uname for uname, u_data in st.session_state.users.items() if u_data['name'] == user_to_edit_name)
+        user_to_edit = st.session_state.users[user_to_edit_username].copy() # Copy to prevent direct session state mutation
+        
+        st.subheader(f"Edit/Delete: {user_to_edit_name}")
+
+        with st.form("edit_delete_user_form", clear_on_submit=False):
+            # Display current username/email (not editable)
+            st.text_input("Username (Not Editable)", value=user_to_edit_username, disabled=True)
+            
+            # Editable fields
+            edited_name = st.text_input("Display Name", value=user_to_edit['name'], key="edit_name")
+            edited_email = st.text_input("Email", value=user_to_edit['email'], key="edit_email").lower()
+            
+            col3, col4 = st.columns(2)
+            with col3:
+                role_index = ['user', 'admin'].index(user_to_edit['role'])
+                edited_role = st.selectbox("Role", ['user', 'admin'], index=role_index, key="edit_role")
+            with col4:
+                # IMPORTANT: Show PIN as masked for security, value is the current PIN
+                edited_pin = st.text_input("PIN (Change)", type="password", max_chars=4, value=user_to_edit['pin'], key="edit_pin")
+
+            # Action Buttons
+            col_update, col_delete = st.columns(2)
+
+            with col_update:
+                edit_submitted = st.form_submit_button("Update User", type="primary")
+            with col_delete:
+                delete_submitted = st.form_submit_button("Delete User", type="secondary")
+
+
+            if edit_submitted:
+                if not edited_name or not edited_email or len(edited_pin) != 4:
+                    st.error("Error: All fields are required, and PIN must be 4 digits.")
+                else:
+                    st.session_state.users[user_to_edit_username].update({
+                        'name': edited_name,
+                        'email': edited_email,
+                        'role': edited_role,
+                        'pin': edited_pin
+                    })
+                    save_users_to_db(st.session_state.users)
+                    st.success(f"User '{edited_name}' updated successfully!")
+                    st.rerun()
+            
+            if delete_submitted:
+                if user_to_edit_username == st.session_state.username:
+                    st.error("Cannot delete your own account while logged in!")
+                else:
+                    # Remove user from dict
+                    del st.session_state.users[user_to_edit_username]
+                    
+                    # Also re-assign any tasks owned by the deleted user to the Admin
+                    admin_username = 'mustafa' # Fallback to a defined admin account
+                    tasks_reassigned = 0
+                    for task in st.session_state.tasks:
+                        if task['owner_id'] == user_to_edit_username:
+                            task['owner_id'] = admin_username
+                            tasks_reassigned += 1
+                            
+                    # Save both changes
+                    save_users_to_db(st.session_state.users)
+                    save_tasks_to_db(st.session_state.tasks)
+                    st.success(f"User '{user_to_edit_name}' deleted. {tasks_reassigned} tasks reassigned to {get_user_name(admin_username)}.")
+                    st.rerun()
+    else:
+        st.warning("No users found to edit or delete.")
+
 
 def dashboard_view():
     """Displays the Dashboard view with Today and Upcoming tasks (filtered by current user)."""
@@ -684,7 +841,27 @@ def main_app_content(name, username):
     # --- SIDEBAR ---
     with st.sidebar:
         st.header("Navigation")
-        view = st.radio("Select View", ['Dashboard', 'Calendar'])
+        # Define view options in session state for cross-page navigation
+        if 'view' not in st.session_state:
+            st.session_state.view = 'Dashboard'
+        
+        admin_options = ['Dashboard', 'Calendar', 'User Management']
+        user_options = ['Dashboard', 'Calendar']
+            
+        view_options = admin_options if current_user['role'] == 'admin' else user_options
+        
+        # Determine the default index for the radio button
+        try:
+            default_index = view_options.index(st.session_state.view)
+        except ValueError:
+            # Fallback if the view is not authorized (e.g., user logs in and view was 'User Management')
+            st.session_state.view = 'Dashboard'
+            default_index = 0
+
+        view = st.radio("Select View", view_options, index=default_index)
+        
+        st.session_state.view = view # Update session state view
+        
         st.markdown("---")
         
         # User Info (Add logout button)
@@ -698,22 +875,45 @@ def main_app_content(name, username):
         
         st.markdown("---")
         
-        # Admin User View
-        admin_only_user_management()
+        # Admin Tools Header and Code Viewer
+        if current_user['role'] == 'admin':
+             st.subheader("Admin Tools")
+             with st.expander("🛠️ Developer Tools"):
+                st.code(
+                    """
+                    # Core Task Functions
+                    def delete_task(task_id):
+                        # ...
+                    def update_task(task_id, new_data):
+                        # ...
+                    """, language="python"
+                )
+
         
     # --- MAIN CONTENT ---
-    # Show edit modal if a task is selected for editing
-    if st.session_state.editing_task_id:
-        edit_task_modal()
+    
+    if st.session_state.view == 'Dashboard' or st.session_state.view == 'Calendar':
+        # These views need the task/edit forms
+        # Show edit modal if a task is selected for editing
+        if st.session_state.editing_task_id:
+            edit_task_modal()
+            st.markdown("---")
+
+        add_task_form()
         st.markdown("---")
-
-    add_task_form()
-    st.markdown("---")
-
-    if view == 'Dashboard':
-        dashboard_view()
-    elif view == 'Calendar':
-        calendar_view()
+        
+        if st.session_state.view == 'Dashboard':
+            dashboard_view()
+        elif st.session_state.view == 'Calendar':
+            calendar_view()
+            
+    elif st.session_state.view == 'User Management' and current_user['role'] == 'admin':
+        admin_user_control_page()
+    else:
+        # Fallback if a user somehow ends up on an unauthorized view
+        st.error("You are not authorized to view this page.")
+        st.session_state.view = 'Dashboard'
+        st.rerun()
 
 # --- MAIN ENTRY POINT ---
 
@@ -728,7 +928,7 @@ def main():
         st.session_state.login_status = False
         st.session_state.username = None
         st.session_state.name = None
-
+    
     st.sidebar.title("TaskFlow Manager")
     
     if st.session_state.login_status:
