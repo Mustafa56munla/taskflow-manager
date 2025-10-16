@@ -613,6 +613,44 @@ def add_task_form():
                 elif submitted and not title:
                      st.error("Task title cannot be empty.")
 
+# --- ADMIN CATEGORY MANAGEMENT FORM ---
+
+def category_management_form():
+    """Admin interface for managing Account and Campaign categories."""
+    current_username = st.session_state.username
+    is_admin = st.session_state.users[current_username]['role'] == 'admin'
+
+    if is_admin:
+        with st.expander("📁 Manage Project Categories (Admin Only)", expanded=False):
+            st.subheader("Edit Accounts and Campaigns")
+            
+            # Edit Accounts
+            st.markdown("##### Accounts")
+            current_accounts = ", ".join(st.session_state.categories['accounts'])
+            # Add a unique key for the text_area to prevent Streamlit warnings/errors
+            new_accounts_str = st.text_area("Edit Accounts (Comma Separated)", value=current_accounts, key="admin_edit_accounts_area")
+            
+            # Edit Campaigns
+            st.markdown("##### Campaigns")
+            current_campaigns = ", ".join(st.session_state.categories['campaigns'])
+            new_campaigns_str = st.text_area("Edit Campaigns (Comma Separated)", value=current_campaigns, key="admin_edit_campaigns_area")
+            
+            if st.button("Save Categories", key="save_categories_button", type="primary"):
+                # Process and clean input
+                updated_accounts = [a.strip() for a in new_accounts_str.split(',') if a.strip()]
+                updated_campaigns = [c.strip() for c in new_campaigns_str.split(',') if c.strip()]
+
+                if updated_accounts and updated_campaigns:
+                    st.session_state.categories['accounts'] = updated_accounts
+                    st.session_state.categories['campaigns'] = updated_campaigns
+                    save_categories_to_db(st.session_state.categories, context="categories updated")
+                    st.success("Accounts and Campaigns updated and saved!")
+                    st.rerun()
+                else:
+                    st.error("Please ensure both Accounts and Campaigns lists are not empty.")
+            st.markdown("---")
+
+
 # --- ADMIN USER CONTROL PAGE ---
 
 def admin_user_control_page():
@@ -636,35 +674,7 @@ def admin_user_control_page():
     
     st.markdown("---")
 
-    # --- 0. CATEGORY MANAGEMENT ---
-    with st.expander("📁 Manage Accounts and Campaigns", expanded=False):
-        st.subheader("Edit Project Categories")
-        
-        # Edit Accounts
-        st.markdown("##### Accounts")
-        current_accounts = ", ".join(st.session_state.categories['accounts'])
-        new_accounts_str = st.text_area("Edit Accounts (Comma Separated)", value=current_accounts, key="edit_accounts_area")
-        
-        # Edit Campaigns
-        st.markdown("##### Campaigns")
-        current_campaigns = ", ".join(st.session_state.categories['campaigns'])
-        new_campaigns_str = st.text_area("Edit Campaigns (Comma Separated)", value=current_campaigns, key="edit_campaigns_area")
-        
-        if st.button("Save Categories", type="primary"):
-            # Process and clean input
-            updated_accounts = [a.strip() for a in new_accounts_str.split(',') if a.strip()]
-            updated_campaigns = [c.strip() for c in new_campaigns_str.split(',') if c.strip()]
-
-            if updated_accounts and updated_campaigns:
-                st.session_state.categories['accounts'] = updated_accounts
-                st.session_state.categories['campaigns'] = updated_campaigns
-                save_categories_to_db(st.session_state.categories, context="categories updated")
-                st.success("Accounts and Campaigns updated and saved!")
-                st.rerun()
-            else:
-                st.error("Please ensure both Accounts and Campaigns lists are not empty.")
-    
-    st.markdown("---")
+    # The Category Management section was moved to category_management_form()
     
     # --- 1. ADD NEW USER FORM ---
     with st.expander("➕ Add New User", expanded=False):
@@ -1029,6 +1039,10 @@ def main_app_content(name, username):
     
     if st.session_state.view == 'Dashboard' or st.session_state.view == 'Calendar':
         # These views need the task/edit forms
+        
+        # Admin Category Management Form
+        category_management_form() # NEW CALL HERE
+        
         # Show edit modal if a task is selected for editing
         if st.session_state.editing_task_id:
             edit_task_modal()
