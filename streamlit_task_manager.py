@@ -483,8 +483,8 @@ def main():
     )
 
     # Attempt to authenticate the user
-    # FIX: Explicitly passing arguments as keyword arguments to satisfy stricter library versions
-    name, authentication_status, username = authenticator.login(form_name='Login', location='main')
+    # FIX: Reverting to positional arguments for compatibility with strict library versions.
+    name, authentication_status, username = authenticator.login('Login', 'main')
 
     if authentication_status:
         # Successful Login
