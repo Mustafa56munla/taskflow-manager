@@ -9,7 +9,8 @@ from yaml.loader import SafeLoader
 
 # Hashed password for the default password 'Password123!'
 # NOTE: Users should change this immediately after logging in.
-DEFAULT_HASH = stauth.Hasher(['Password123!']).generate_password_hash()[0]
+# FIX: Changed the hashing method from generate_password_hash() to the current standard generate()
+DEFAULT_HASH = stauth.Hasher(['Password123!']).generate()[0]
 
 # User credentials structure for the authenticator
 USER_CREDENTIALS = {
@@ -449,6 +450,7 @@ def main_app_content(name, username, authenticator):
         
         # Password Change
         with st.expander("🔑 Change Password"):
+            # We must pass the credentials dictionary to update_user_details for it to work
             if authenticator.update_user_details(username, 'Update password'):
                 # After successful change, update the session state for immediate use 
                 # (in a real app, this would update the database/config file)
