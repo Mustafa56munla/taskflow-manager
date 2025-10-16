@@ -907,9 +907,11 @@ def dashboard_view():
     # --- 2. Apply Filters ---
     
     # Determine the base list based on role (Admin sees ALL tasks, User sees ONLY their tasks)
-    if is_admin and st.session_state.calendar_filter_radio == 'All Team Tasks':
+    # The calendar filter radio button is only visible to Admin, so check its state if Admin.
+    if is_admin and st.session_state.get('calendar_filter_radio') == 'All Team Tasks':
         base_tasks_to_filter = st.session_state.tasks
     else:
+        # If not admin, or admin is on 'My Tasks' view, filter by current user
         base_tasks_to_filter = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
 
 
