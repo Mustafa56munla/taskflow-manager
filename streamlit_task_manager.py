@@ -811,41 +811,114 @@ def dashboard_view():
     today = datetime.now().date()
     
     current_username = st.session_state.username
+    current_user_info = st.session_state.users[current_username]
+    is_admin = current_user_info['role'] == 'admin'
+    
     # Base list: filter to only show tasks owned by the current user
     user_tasks = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
     
     # --- 1. Filter Widgets ---
     account_options = st.session_state.categories.get('accounts', [])
     campaign_options = st.session_state.categories.get('campaigns', [])
+    status_options = ['Incomplete', 'Completed']
 
-    if account_options or campaign_options:
-        with st.expander("🔍 Filter Tasks", expanded=False):
-            filter_cols = st.columns(2)
-            
-            with filter_cols[0]:
-                selected_accounts = st.multiselect(
-                    "Filter by Account", 
-                    options=account_options, 
-                    default=account_options,
-                    key='dash_account_filter'
+    # Get all potential owners for Admin (Owner filter is only visible if the user is Admin)
+    all_owner_names = [st.session_state.users[uname]['name'] for uname in st.session_state.users.keys()]
+    all_owner_usernames = list(st.session_state.users.keys())
+
+    
+    with st.expander("🔍 Filter & Sort Tasks", expanded=False):
+        
+        # Row 1: Context Filters (Account/Campaign)
+        st.markdown("##### Project Context Filters")
+        filter_cols_1 = st.columns(2)
+        with filter_cols_1[0]:
+            selected_accounts = st.multiselect(
+                "Account(s)", 
+                options=account_options, 
+                default=account_options,
+                key='dash_account_filter'
+            )
+        with filter_cols_1[1]:
+            selected_campaigns = st.multiselect(
+                "Campaign(s)", 
+                options=campaign_options, 
+                default=campaign_options,
+                key='dash_campaign_filter'
+            )
+        
+        st.markdown("##### Status and Team Filters")
+        # Row 2: Status, Owner, and Sort
+        filter_cols_2 = st.columns(3)
+        
+        # Status Filter
+        with filter_cols_2[0]:
+            selected_status_names = st.multiselect(
+                "Status",
+                options=status_options,
+                default=['Incomplete'], # Default to showing only incomplete tasks
+                key='dash_status_filter'
+            )
+            # Convert status names to boolean logic
+            is_completed_filter = {
+                'Incomplete': False,
+                'Completed': True
+            }
+            selected_statuses = [is_completed_filter[s] for s in selected_status_names]
+
+        # Owner Filter (Admin Only Feature)
+        with filter_cols_2[1]:
+            if is_admin:
+                # Admin can filter by any user
+                selected_owner_names = st.multiselect(
+                    "Owner(s)", 
+                    options=all_owner_names, 
+                    default=all_owner_names,
+                    key='dash_owner_filter'
                 )
-            with filter_cols[1]:
-                selected_campaigns = st.multiselect(
-                    "Filter by Campaign", 
-                    options=campaign_options, 
-                    default=campaign_options,
-                    key='dash_campaign_filter'
-                )
+                # Convert names back to usernames (owner_id) for filtering
+                selected_owners = [
+                    uname for uname, u_data in st.session_state.users.items() 
+                    if u_data['name'] in selected_owner_names
+                ]
+            else:
+                # Regular user is always restricted to themselves, but need a default value
+                selected_owners = [current_username]
+                st.info("Showing only your tasks.")
+        
+        # Sort Control
+        with filter_cols_2[2]:
+            sort_by = st.selectbox(
+                "Sort By",
+                options=['Due Date', 'Title'],
+                key='dash_sort_select'
+            )
         
     else:
+        # Default filters if no categories exist
         selected_accounts = st.session_state.categories.get('accounts', [])
         selected_campaigns = st.session_state.categories.get('campaigns', [])
+        selected_statuses = [False]
+        selected_owners = [current_username]
+        sort_by = 'Due Date' # Default sort
+
     # --- End Filter Widgets ---
     
     # --- 2. Apply Filters ---
+    
+    # Determine the base list based on role (Admin sees ALL tasks, User sees ONLY their tasks)
+    if is_admin and st.session_state.calendar_filter_radio == 'All Team Tasks':
+        base_tasks_to_filter = st.session_state.tasks
+    else:
+        base_tasks_to_filter = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
+
+
     filtered_tasks = [
-        task for task in user_tasks
-        if task.get('account') in selected_accounts and task.get('campaign') in selected_campaigns
+        task for task in base_tasks_to_filter
+        if task.get('account') in selected_accounts and 
+           task.get('campaign') in selected_campaigns and
+           task.get('is_completed') in selected_statuses and
+           task.get('owner_id') in selected_owners
     ]
     
     # 3. Calculate next due dates for all tasks
@@ -858,21 +931,19 @@ def dashboard_view():
                 'next_due_date': next_date,
             })
 
-    # 4. Filter into sections
-    tasks_due_today = sorted(
-        [t for t in tasks_with_next_date if t['next_due_date'] == today], 
-        key=lambda x: x['title']
-    )
-    
-    upcoming_tasks = sorted(
-        [t for t in tasks_with_next_date if today < t['next_due_date'] <= today + timedelta(days=7)], 
-        key=lambda x: x['next_due_date']
-    )
-    
-    all_user_tasks = sorted(
-        tasks_with_next_date, 
-        key=lambda x: x['next_due_date']
-    )
+    # 4. Apply Sorting
+    if sort_by == 'Due Date':
+        sort_key = lambda x: x['next_due_date']
+    else: # Title
+        sort_key = lambda x: x['title']
+
+    sorted_tasks = sorted(tasks_with_next_date, key=sort_key)
+
+
+    # 5. Filter into Dashboard Sections (using the sorted list)
+    tasks_due_today = [t for t in sorted_tasks if t['next_due_date'] == today]
+    upcoming_tasks = [t for t in sorted_tasks if today < t['next_due_date'] <= today + timedelta(days=7)]
+    all_user_tasks = sorted_tasks # This is already sorted and filtered
 
     def toggle_task_completion(task_id):
         """Toggles the completion status of a task by its ID."""
@@ -949,34 +1020,78 @@ def calendar_view():
     # --- 1. Filter Widgets ---
     account_options = st.session_state.categories.get('accounts', [])
     campaign_options = st.session_state.categories.get('campaigns', [])
+    status_options = ['Incomplete', 'Completed']
+    all_owner_names = [st.session_state.users[uname]['name'] for uname in st.session_state.users.keys()]
+
+
+    with st.expander("🔍 Filter Calendar", expanded=True): # Calendar filter often expanded
+        filter_cols_1 = st.columns(2)
+        
+        with filter_cols_1[0]:
+            cal_selected_accounts = st.multiselect(
+                "Account(s)", 
+                options=account_options, 
+                default=account_options,
+                key='cal_account_filter'
+            )
+        with filter_cols_1[1]:
+            cal_selected_campaigns = st.multiselect(
+                "Campaign(s)", 
+                options=campaign_options, 
+                default=campaign_options,
+                key='cal_campaign_filter'
+            )
+        
+        st.markdown("---")
+        filter_cols_2 = st.columns(2)
+        
+        # Status Filter
+        with filter_cols_2[0]:
+            cal_selected_status_names = st.multiselect(
+                "Status",
+                options=status_options,
+                default=status_options,
+                key='cal_status_filter'
+            )
+            cal_is_completed_filter = {
+                'Incomplete': False,
+                'Completed': True
+            }
+            cal_selected_statuses = [cal_is_completed_filter[s] for s in cal_selected_status_names]
+
+        # Owner Filter (Admin Only Feature)
+        with filter_cols_2[1]:
+            if is_admin:
+                # Admin can filter by any user
+                cal_selected_owner_names = st.multiselect(
+                    "Owner(s)", 
+                    options=all_owner_names, 
+                    default=all_owner_names,
+                    key='cal_owner_filter'
+                )
+                cal_selected_owners = [
+                    uname for uname, u_data in st.session_state.users.items() 
+                    if u_data['name'] in cal_selected_owner_names
+                ]
+            else:
+                # Regular user is always restricted to themselves
+                cal_selected_owners = [current_username]
+                st.caption("Owner filter restricted to your tasks.")
     
-    if account_options or campaign_options:
-        with st.expander("🔍 Filter Calendar", expanded=True): # Calendar filter often expanded
-            filter_cols = st.columns(2)
-            
-            with filter_cols[0]:
-                cal_selected_accounts = st.multiselect(
-                    "Filter by Account", 
-                    options=account_options, 
-                    default=account_options,
-                    key='cal_account_filter'
-                )
-            with filter_cols[1]:
-                cal_selected_campaigns = st.multiselect(
-                    "Filter by Campaign", 
-                    options=campaign_options, 
-                    default=campaign_options,
-                    key='cal_campaign_filter'
-                )
-    else:
+    # Default filters if the expander is not used
+    if not (account_options or campaign_options):
         cal_selected_accounts = st.session_state.categories.get('accounts', [])
         cal_selected_campaigns = st.session_state.categories.get('campaigns', [])
-    # --- End Filter Widgets ---
+        cal_selected_statuses = [False, True]
+        cal_selected_owners = [current_username] if not is_admin else all_owner_usernames
     
     # --- 2. Apply Filters to Base Task List ---
     tasks_to_check = [
         task for task in base_tasks
-        if task.get('account') in cal_selected_accounts and task.get('campaign') in cal_selected_campaigns
+        if task.get('account') in cal_selected_accounts and 
+           task.get('campaign') in cal_selected_campaigns and
+           task.get('is_completed') in cal_selected_statuses and
+           task.get('owner_id') in cal_selected_owners
     ]
     # --- End Apply Filters ---
 
@@ -1177,7 +1292,6 @@ def main():
                 # Use columns to position the login button
                 col1, col2 = st.columns([1, 1])
                 with col1:
-                    # FIX: Submit button label changed to "Sign In"
                     login_submitted = st.form_submit_button("Sign In", type="primary") 
 
                 if login_submitted:
