@@ -584,27 +584,36 @@ def admin_user_control_page():
     # --- 2. EDIT/DELETE EXISTING USER FORM ---
     if st.session_state.users:
         
-        user_to_edit_name = st.selectbox("Select User to Edit or Delete", [u['name'] for u in st.session_state.users.values()])
+        # Determine the list of users for the selector
+        user_options = [u['name'] for u in st.session_state.users.values()]
+        
+        # Safely determine the selected user's name
+        user_to_edit_name = st.selectbox("Select User to Edit or Delete", user_options, key="select_user_to_edit")
+        
+        # Safely find the corresponding username (key)
         user_to_edit_username = next(uname for uname, u_data in st.session_state.users.items() if u_data['name'] == user_to_edit_name)
-        user_to_edit = st.session_state.users[user_to_edit_username].copy() # Copy to prevent direct session state mutation
+        user_to_edit = st.session_state.users[user_to_edit_username].copy()
         
         st.subheader(f"Edit/Delete: {user_to_edit_name}")
 
-        with st.form("edit_delete_user_form", clear_on_submit=False):
+        # FIX: Form key is now unique based on the selected user's username
+        with st.form(f"edit_delete_user_form_{user_to_edit_username}", clear_on_submit=False):
+            
             # Display current username/email (not editable)
-            st.text_input("Username (Not Editable)", value=user_to_edit_username, disabled=True)
+            st.text_input("Username (Not Editable)", value=user_to_edit_username, disabled=True, key=f"username_display_{user_to_edit_username}")
             
             # Editable fields
-            edited_name = st.text_input("Display Name", value=user_to_edit['name'], key="edit_name")
-            edited_email = st.text_input("Email", value=user_to_edit['email'], key="edit_email").lower()
+            edited_name = st.text_input("Display Name", value=user_to_edit['name'], key=f"edit_name_{user_to_edit_username}")
+            edited_email = st.text_input("Email", value=user_to_edit['email'], key=f"edit_email_{user_to_edit_username}").lower()
             
             col3, col4 = st.columns(2)
             with col3:
                 role_index = ['user', 'admin'].index(user_to_edit['role'])
-                edited_role = st.selectbox("Role", ['user', 'admin'], index=role_index, key="edit_role")
+                # FIX: Role is correctly loaded using the current user's role index
+                edited_role = st.selectbox("Role", ['user', 'admin'], index=role_index, key=f"edit_role_{user_to_edit_username}")
             with col4:
-                # IMPORTANT: Show PIN as masked for security, value is the current PIN
-                edited_pin = st.text_input("PIN (Change)", type="password", max_chars=4, value=user_to_edit['pin'], key="edit_pin")
+                # PIN value is correctly loaded
+                edited_pin = st.text_input("PIN (Change)", type="password", max_chars=4, value=user_to_edit['pin'], key=f"edit_pin_{user_to_edit_username}")
 
             # Action Buttons
             col_update, col_delete = st.columns(2)
@@ -619,6 +628,7 @@ def admin_user_control_page():
                 if not edited_name or not edited_email or len(edited_pin) != 4:
                     st.error("Error: All fields are required, and PIN must be 4 digits.")
                 else:
+                    # Update the session state and save to DB
                     st.session_state.users[user_to_edit_username].update({
                         'name': edited_name,
                         'email': edited_email,
