@@ -162,15 +162,15 @@ def task_card(task, next_due_date, current_view, on_complete=None):
             st.markdown(f'<div style="font-weight: bold; font-size: 14px; text-align: right;">{next_due_date.strftime("%b %d")}</div>', unsafe_allow_html=True)
             st.markdown(f'<div style="font-size: 10px; text-align: right; color: #6b7280; text-transform: uppercase;">{recurrence_text}</div>', unsafe_allow_html=True)
 
-    # Edit Button
+    # Edit Button (FIXED: Added current_view to the key to prevent duplicates)
     with col3:
         if can_edit_or_delete:
-            if st.button("Edit", key=f"edit_{task['id']}", help="Edit this task"):
+            if st.button("Edit", key=f"edit_{task['id']}_{current_view}", help="Edit this task"):
                 st.session_state.editing_task_id = task['id']
                 st.session_state.edit_form_key += 1 # Force rerun to show modal
                 st.rerun()
 
-    # Done/Un-do or Delete Button
+    # Done/Un-do or Delete Button (FIXED: Added current_view to the key for Delete button)
     with col4:
         if current_view != 'All My Tasks' and is_owner:
             # Actionable view (Today/Upcoming) - show Done/Un-do
@@ -180,7 +180,7 @@ def task_card(task, next_due_date, current_view, on_complete=None):
                 st.button("Un-do", key=f"uncomplete_{task['id']}_{current_view}", on_click=on_complete, args=(task['id'],))
         elif can_edit_or_delete:
             # Non-actionable view (All Tasks) or not owner - show Delete
-            if st.button("Delete", key=f"delete_{task['id']}", help="Delete this task forever"):
+            if st.button("Delete", key=f"delete_{task['id']}_{current_view}", help="Delete this task forever"):
                 delete_task(task['id'])
 
     st.markdown("---") # Simple separator
