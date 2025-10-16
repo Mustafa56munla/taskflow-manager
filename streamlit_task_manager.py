@@ -805,12 +805,46 @@ def dashboard_view():
     today = datetime.now().date()
     
     current_username = st.session_state.username
-    # Dashboard always filters to only show tasks owned by the current user
+    # Base list: filter to only show tasks owned by the current user
     user_tasks = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
     
-    # 1. Calculate next due dates for all tasks
+    # --- 1. Filter Widgets ---
+    account_options = st.session_state.categories.get('accounts', [])
+    campaign_options = st.session_state.categories.get('campaigns', [])
+
+    if account_options or campaign_options:
+        with st.expander("🔍 Filter Tasks", expanded=False):
+            filter_cols = st.columns(2)
+            
+            with filter_cols[0]:
+                selected_accounts = st.multiselect(
+                    "Filter by Account", 
+                    options=account_options, 
+                    default=account_options,
+                    key='dash_account_filter'
+                )
+            with filter_cols[1]:
+                selected_campaigns = st.multiselect(
+                    "Filter by Campaign", 
+                    options=campaign_options, 
+                    default=campaign_options,
+                    key='dash_campaign_filter'
+                )
+        
+    else:
+        selected_accounts = st.session_state.categories.get('accounts', [])
+        selected_campaigns = st.session_state.categories.get('campaigns', [])
+    # --- End Filter Widgets ---
+    
+    # --- 2. Apply Filters ---
+    filtered_tasks = [
+        task for task in user_tasks
+        if task.get('account') in selected_accounts and task.get('campaign') in selected_campaigns
+    ]
+    
+    # 3. Calculate next due dates for all tasks
     tasks_with_next_date = []
-    for task in user_tasks:
+    for task in filtered_tasks: # Use filtered_tasks here
         next_date = get_next_occurrence(task, today, 365) 
         if next_date:
             tasks_with_next_date.append({
@@ -818,7 +852,7 @@ def dashboard_view():
                 'next_due_date': next_date,
             })
 
-    # 2. Filter into sections
+    # 4. Filter into sections
     tasks_due_today = sorted(
         [t for t in tasks_with_next_date if t['next_due_date'] == today], 
         key=lambda x: x['title']
@@ -899,12 +933,47 @@ def calendar_view():
         view_filter = 'My Tasks'
         st.caption("Showing tasks assigned to you.")
     
-    # Set the list of tasks to check based on the filter
+    # Set the base list of tasks to check based on the user filter
     if view_filter == 'All Team Tasks':
-        tasks_to_check = st.session_state.tasks
+        base_tasks = st.session_state.tasks
     else: # 'My Tasks'
-        tasks_to_check = [t for t in st.session_state.tasks if t['owner_id'] == current_username]
+        base_tasks = [t for t in st.session_state.tasks if t['owner_id'] == current_username]
     
+    
+    # --- 1. Filter Widgets ---
+    account_options = st.session_state.categories.get('accounts', [])
+    campaign_options = st.session_state.categories.get('campaigns', [])
+    
+    if account_options or campaign_options:
+        with st.expander("🔍 Filter Calendar", expanded=True): # Calendar filter often expanded
+            filter_cols = st.columns(2)
+            
+            with filter_cols[0]:
+                cal_selected_accounts = st.multiselect(
+                    "Filter by Account", 
+                    options=account_options, 
+                    default=account_options,
+                    key='cal_account_filter'
+                )
+            with filter_cols[1]:
+                cal_selected_campaigns = st.multiselect(
+                    "Filter by Campaign", 
+                    options=campaign_options, 
+                    default=campaign_options,
+                    key='cal_campaign_filter'
+                )
+    else:
+        cal_selected_accounts = st.session_state.categories.get('accounts', [])
+        cal_selected_campaigns = st.session_state.categories.get('campaigns', [])
+    # --- End Filter Widgets ---
+    
+    # --- 2. Apply Filters to Base Task List ---
+    tasks_to_check = [
+        task for task in base_tasks
+        if task.get('account') in cal_selected_accounts and task.get('campaign') in cal_selected_campaigns
+    ]
+    # --- End Apply Filters ---
+
     # Current month navigation
     if 'calendar_date' not in st.session_state:
         st.session_state.calendar_date = datetime.now().date()
@@ -943,6 +1012,7 @@ def calendar_view():
     for week in month_days:
         cols = st.columns(7)
         for i, day_date in enumerate(week):
+            # Use the filtered tasks_to_check list
             tasks_due = [t for t in tasks_to_check if is_task_due(t, day_date)]
             
             is_current_month = day_date.month == current_date.month
