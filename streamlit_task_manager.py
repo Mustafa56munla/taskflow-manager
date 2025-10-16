@@ -1,5 +1,5 @@
 import streamlit as st
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date # FIX: Added 'date' to imports
 import calendar
 import firebase_admin
 from firebase_admin import credentials, firestore
@@ -133,14 +133,14 @@ def save_tasks_to_db(tasks):
         due_date_value = task_copy.get('due_date')
 
         # Robust Type Check for Saving to Firestore:
-        # FIX: Check for datetime.datetime first, then datetime.date (since date is a superclass)
         
         # 1. Check for valid Python datetime object (from Firestore load, is fine as-is)
         if isinstance(due_date_value, datetime):
             task_copy['due_date'] = due_date_value
         
         # 2. Check for valid Python date object (from st.date_input, needs conversion to datetime)
-        elif isinstance(due_date_value, datetime.date):
+        # We now use the imported 'date' class directly:
+        elif isinstance(due_date_value, date):
             # Convert Python date (YYYY-MM-DD) to datetime (Timestamp)
             task_copy['due_date'] = datetime.combine(due_date_value, datetime.min.time())
         
@@ -193,6 +193,9 @@ def initialize_tasks():
 # ... (Recurrence logic remains unchanged)
 def day_difference(date1, date2):
     """Calculates the difference in days between two date objects."""
+    # FIX: Ensure both date objects are used correctly in the check
+    if isinstance(date1, datetime): date1 = date1.date()
+    if isinstance(date2, datetime): date2 = date2.date()
     return abs((date2 - date1).days)
 
 def is_task_due(task, target_date):
