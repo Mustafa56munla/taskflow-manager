@@ -129,9 +129,18 @@ def save_tasks_to_db(tasks):
     data_to_save = []
     for task in tasks:
         task_copy = task.copy()
-        if isinstance(task_copy.get('due_date'), datetime.date):
+        
+        # FIX: Ensure due_date is a valid date object before attempting conversion.
+        due_date_value = task_copy.get('due_date')
+
+        if isinstance(due_date_value, datetime.date):
             # Convert Python date to datetime before saving (Firestore stores datetimes/Timestamps)
-            task_copy['due_date'] = datetime.combine(task_copy['due_date'], datetime.min.time())
+            task_copy['due_date'] = datetime.combine(due_date_value, datetime.min.time())
+        elif due_date_value is None or (isinstance(due_date_value, str) and not due_date_value):
+             # If due_date is None or an empty string, set it to None for Firestore
+             task_copy['due_date'] = None
+        # If it's already a Timestamp or datetime, it passes through.
+        
         data_to_save.append(task_copy)
 
     # 2. Save the entire list as an array field in a single document
