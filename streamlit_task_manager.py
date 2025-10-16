@@ -3,6 +3,9 @@ from datetime import datetime, timedelta
 import calendar
 import firebase_admin
 from firebase_admin import credentials, firestore
+import json
+import tempfile
+import os
 
 # --- CONFIGURATION & CREDENTIALS ---
 
@@ -29,20 +32,35 @@ def initialize_firebase():
     """Initializes the Firebase Admin SDK if not already done."""
     # Check if app is already initialized to prevent errors on rerun
     if not firebase_admin._apps:
+        temp_file_name = None
         try:
-            # Load service account credentials from Streamlit secrets
+            # Load service account credentials dictionary from Streamlit secrets
             cred_dict = st.secrets["firebase_key"] 
             
-            # FIX: Use from_service_account_info instead of credentials.Certificate(dict)
-            # This method is designed to consume the dictionary directly from st.secrets, 
-            # which solves the "Invalid certificate argument" error when the private key 
-            # contains line breaks.
-            cred = credentials.Certificate.from_service_account_info(cred_dict) 
+            # --- ROBUST FIX for version incompatibility ---
+            # 1. Write the service account dictionary to a temporary JSON file.
+            # 2. Use the file path for initialization, which is the most compatible method.
+            
+            with tempfile.NamedTemporaryFile(mode="w", delete=False) as temp_file:
+                json.dump(cred_dict, temp_file)
+                # Store the file name to delete it later
+                temp_file_name = temp_file.name
+
+            # Use the path to the temporary file for credentials.Certificate
+            cred = credentials.Certificate(temp_file_name)
             
             firebase_admin.initialize_app(cred)
             st.session_state.db = firestore.client()
+            
+            # Clean up the temporary file immediately after successful initialization
+            if temp_file_name and os.path.exists(temp_file_name):
+                os.remove(temp_file_name)
+
         except Exception as e:
-            st.error(f"🛑 Error initializing Firebase. Have you set up the 'firebase_key' secret? Details: {e}")
+            # Clean up on failure as well
+            if temp_file_name and os.path.exists(temp_file_name):
+                os.remove(temp_file_name)
+            st.error(f"🛑 Error initializing Firebase. Have you set up the 'firebase_key' secret correctly? Details: {e}")
             st.stop()
     # Ensure client is available in session state after initialization
     if 'db' not in st.session_state:
