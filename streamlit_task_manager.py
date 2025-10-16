@@ -32,7 +32,13 @@ def initialize_firebase():
         try:
             # Load service account credentials from Streamlit secrets
             cred_dict = st.secrets["firebase_key"] 
-            cred = credentials.Certificate(cred_dict)
+            
+            # FIX: Use from_service_account_info instead of credentials.Certificate(dict)
+            # This method is designed to consume the dictionary directly from st.secrets, 
+            # which solves the "Invalid certificate argument" error when the private key 
+            # contains line breaks.
+            cred = credentials.Certificate.from_service_account_info(cred_dict) 
+            
             firebase_admin.initialize_app(cred)
             st.session_state.db = firestore.client()
         except Exception as e:
@@ -138,7 +144,6 @@ def initialize_tasks():
 
 # --- RECURRENCE LOGIC (Python Implementation) ---
 # ... (Recurrence logic remains unchanged)
-# ... (day_difference, is_task_due, get_next_occurrence functions)
 def day_difference(date1, date2):
     """Calculates the difference in days between two date objects."""
     return abs((date2 - date1).days)
