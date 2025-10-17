@@ -19,15 +19,24 @@ SIMPLIFIED_USER_CREDENTIALS = {
 # Task Types for the UI selection
 TASK_TYPES = ['one-time', 'daily', 'weekly', 'bi-weekly', 'monthly']
 
+# NEW: Priority Options and Sorting Order Mapping
+PRIORITY_OPTIONS = ['High', 'Medium', 'Low']
+PRIORITY_COLORS = {'High': '#ef4444', 'Medium': '#f59e0b', 'Low': '#3b82f6'} # Tailwind color mapping
+# Dictionary to map priority strings to sortable numerical values (High=1, Low=3)
+PRIORITY_SORT_MAP = {'High': 1, 'Medium': 2, 'Low': 3}
+
 # Mock Category Data
 MOCK_ACCOUNTS = ['Nike', 'Adidas', 'Puma', 'General']
 MOCK_CAMPAIGNS = ['Holiday 2025', 'Q4 Launch', 'Brand Awareness']
 
 # Define the initial mock tasks outside of functions
 INITIAL_MOCK_TASKS = [
-    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, 'account': 'Nike', 'campaign': 'Holiday 2025' },
-    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, 'account': 'Adidas', 'campaign': 'Q4 Launch' },
-    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, 'account': 'General', 'campaign': 'Brand Awareness' }
+    # ADDED PRIORITY: 'High'
+    { 'id': 'task_1', 'title': 'Review Authentication', 'description': 'Test the new login system.', 'due_date': datetime.now().date(), 'type': 'one-time', 'owner_id': 'mustafa', 'is_completed': False, 'account': 'Nike', 'campaign': 'Holiday 2025', 'priority': 'High' },
+    # ADDED PRIORITY: 'Medium'
+    { 'id': 'task_2', 'title': 'Weekly Report Prep', 'description': 'Prepare slide deck for management.', 'due_date': datetime.now().date() - timedelta(days=2), 'type': 'weekly', 'owner_id': 'bob', 'is_completed': False, 'account': 'Adidas', 'campaign': 'Q4 Launch', 'priority': 'Medium' },
+    # ADDED PRIORITY: 'Low'
+    { 'id': 'task_3', 'title': 'Clean Database', 'description': 'Routine maintenance.', 'due_date': datetime.now().date().replace(day=5), 'type': 'monthly', 'owner_id': 'charlie', 'is_completed': False, 'account': 'General', 'campaign': 'Brand Awareness', 'priority': 'Low' }
 ]
 
 # --- HELPER FUNCTIONS ---
@@ -132,6 +141,9 @@ def load_tasks_from_db():
                 # Convert Firestore Timestamp (datetime.datetime) to Python date object
                 if task.get('due_date') and hasattr(task['due_date'], 'date'):
                     task['due_date'] = task['due_date'].date()
+                # Ensure priority is set, defaulting to 'Medium' if missing (for old tasks)
+                if 'priority' not in task:
+                    task['priority'] = 'Medium' 
                 
                 # Find the highest existing task ID for the counter
                 if task['id'].startswith('task_'):
@@ -375,15 +387,20 @@ def task_card(task, next_due_date, current_view, on_complete=None, index=None):
     is_recurrent = task['type'] != 'one-time'
     recurrence_text = f"Repeats {task['type'].replace('-', ' ')}" if is_recurrent else 'One-time'
     
+    # NEW: Get priority info for styling and display
+    priority = task.get('priority', 'Medium')
+    priority_color = PRIORITY_COLORS.get(priority, '#cccccc') # Default gray
+    
     # Determine card styling
     if task['is_completed']:
         card_style = "opacity: 0.6; background-color: #e5e7eb;"
         title_style = "text-decoration: line-through; color: #6b7280;"
     elif is_recurrent:
-        card_style = "border-left: 4px solid #34d399; background-color: #ecfdf5;"
+        card_style = f"border-left: 4px solid {priority_color}; background-color: #ecfdf5;"
         title_style = "color: #1f2937;"
     else:
-        card_style = "border-left: 4px solid #f87171; background-color: #fef2f2;"
+        # Use priority color for one-time tasks
+        card_style = f"border-left: 4px solid {priority_color}; background-color: #fef2f2;"
         title_style = "color: #1f2937;"
 
     # Current user context for edit/delete permissions
@@ -401,9 +418,10 @@ def task_card(task, next_due_date, current_view, on_complete=None, index=None):
 
     with col1:
         st.markdown(f'<div style="{title_style} font-weight: bold; font-size: 16px;">{task["title"]}</div>', unsafe_allow_html=True)
-        # NEW: Display Account and Campaign
-        context_text = f"**{task.get('account', 'No Account')}** / **{task.get('campaign', 'No Campaign')}** | "
-        st.caption(f"{context_text}Owned by: **{owner_name}** | {task['description'] if task['description'] else 'No description.'}")
+        # NEW: Display Priority and Context
+        priority_tag = f'<span style="color: {priority_color}; font-weight: bold;">{priority.upper()}</span>'
+        context_text = f"**{task.get('account', 'No Account')}** / **{task.get('campaign', 'No Campaign')}** | Priority: {priority_tag} | "
+        st.caption(f"{context_text}Owned by: **{owner_name}** | {task['description'] if task['description'] else 'No description.'}", unsafe_allow_html=True)
         
     with col2:
         if next_due_date:
@@ -478,7 +496,7 @@ def edit_task_modal():
         new_description = st.text_area("Description (Optional)", value=task['description'])
         
         # Recurrence and Date Column
-        cols = st.columns(2)
+        cols = st.columns(3) # Increased columns to 3
         with cols[0]:
             # Ensure due_date is a date object for the date_input widget
             current_due_date = task['due_date'] if isinstance(task['due_date'], datetime) else datetime.combine(task['due_date'], datetime.min.time()).date()
@@ -486,6 +504,10 @@ def edit_task_modal():
         with cols[1]:
             type_index = TASK_TYPES.index(task['type']) if task['type'] in TASK_TYPES else 0
             new_task_type = st.selectbox("Recurrence", TASK_TYPES, index=type_index)
+        with cols[2]:
+            # NEW PRIORITY FIELD
+            priority_index = PRIORITY_OPTIONS.index(task.get('priority', 'Medium'))
+            new_priority = st.selectbox("Priority", PRIORITY_OPTIONS, index=priority_index)
         
         # NEW: Account and Campaign Selection
         st.markdown("---")
@@ -534,6 +556,7 @@ def edit_task_modal():
                 # NEW FIELDS
                 'account': new_account,
                 'campaign': new_campaign,
+                'priority': new_priority, # SAVE NEW PRIORITY
             }
             update_task(task_id, new_data)
 
@@ -556,12 +579,16 @@ def add_task_form():
                 title = st.text_input("Title", key="title_input")
                 description = st.text_area("Description (Optional)", key="desc_input")
                 
-                # Recurrence and Date Column
-                cols = st.columns(2)
+                # Recurrence, Date, and Priority Column
+                cols = st.columns(3) # Increased columns to 3
                 with cols[0]:
                     due_date = st.date_input("Due/Start Date", value=datetime.now().date(), key="date_input")
                 with cols[1]:
                     task_type = st.selectbox("Recurrence", TASK_TYPES, key="type_select")
+                with cols[2]:
+                    # NEW PRIORITY FIELD
+                    new_priority = st.selectbox("Priority", PRIORITY_OPTIONS, key="priority_select")
+
 
                 # NEW: Account and Campaign Selection
                 st.markdown("---")
@@ -613,6 +640,7 @@ def add_task_form():
                         # NEW FIELDS
                         'account': new_account,
                         'campaign': new_campaign,
+                        'priority': new_priority, # SAVE NEW PRIORITY
                     })
                     save_tasks_to_db(st.session_state.tasks) # Call save after modifying
                     st.success(f"Task '{title}' added and assigned to {get_user_name(assignee_id)}!")
@@ -821,6 +849,7 @@ def dashboard_view():
     account_options = st.session_state.categories.get('accounts', [])
     campaign_options = st.session_state.categories.get('campaigns', [])
     status_options = ['Incomplete', 'Completed']
+    priority_options_filter = PRIORITY_OPTIONS # Use the defined options
 
     # Get all potential owners for Admin (Owner filter is only visible if the user is Admin)
     all_owner_names = [st.session_state.users[uname]['name'] for uname in st.session_state.users.keys()]
@@ -847,9 +876,9 @@ def dashboard_view():
                 key='dash_campaign_filter'
             )
         
-        st.markdown("##### Status and Team Filters")
-        # Row 2: Status, Owner, and Sort
-        filter_cols_2 = st.columns(3)
+        st.markdown("##### Status, Priority, and Team Filters")
+        # Row 2: Status, Priority, Owner, and Sort
+        filter_cols_2 = st.columns(4) # Increased columns to 4
         
         # Status Filter
         with filter_cols_2[0]:
@@ -866,8 +895,17 @@ def dashboard_view():
             }
             selected_statuses = [is_completed_filter[s] for s in selected_status_names]
 
-        # Owner Filter (Admin Only Feature)
+        # Priority Filter (NEW)
         with filter_cols_2[1]:
+            selected_priorities = st.multiselect(
+                "Priority",
+                options=priority_options_filter,
+                default=priority_options_filter,
+                key='dash_priority_filter'
+            )
+
+        # Owner Filter (Admin Only Feature)
+        with filter_cols_2[2]:
             if is_admin:
                 # Admin can filter by any user
                 selected_owner_names = st.multiselect(
@@ -887,12 +925,23 @@ def dashboard_view():
                 st.info("Showing only your tasks.")
         
         # Sort Control
-        with filter_cols_2[2]:
+        with filter_cols_2[3]:
             sort_by = st.selectbox(
                 "Sort By",
-                options=['Due Date', 'Title'],
+                options=['Priority & Due Date', 'Due Date', 'Title'],
                 key='dash_sort_select'
             )
+        
+    else:
+        # Default filters if the expander is closed or not available
+        selected_accounts = st.session_state.categories.get('accounts', [])
+        selected_campaigns = st.session_state.categories.get('campaigns', [])
+        selected_statuses = [False]
+        selected_priorities = PRIORITY_OPTIONS
+        selected_owners = [current_username]
+        sort_by = 'Priority & Due Date' # Default sort
+
+    # --- End Filter Widgets ---
     
     # --- 2. Apply Filters ---
     
@@ -910,7 +959,8 @@ def dashboard_view():
         if task.get('account') in selected_accounts and 
            task.get('campaign') in selected_campaigns and
            task.get('is_completed') in selected_statuses and
-           task.get('owner_id') in selected_owners
+           task.get('owner_id') in selected_owners and
+           task.get('priority') in selected_priorities # NEW PRIORITY FILTER
     ]
     
     # 3. Calculate next due dates for all tasks
@@ -924,7 +974,10 @@ def dashboard_view():
             })
 
     # 4. Apply Sorting
-    if sort_by == 'Due Date':
+    if sort_by == 'Priority & Due Date':
+        # Sort first by priority number (1=High) and then by due date
+        sort_key = lambda x: (PRIORITY_SORT_MAP.get(x.get('priority', 'Medium'), 2), x['next_due_date'])
+    elif sort_by == 'Due Date':
         sort_key = lambda x: x['next_due_date']
     else: # Title
         sort_key = lambda x: x['title']
@@ -1013,6 +1066,7 @@ def calendar_view():
     account_options = st.session_state.categories.get('accounts', [])
     campaign_options = st.session_state.categories.get('campaigns', [])
     status_options = ['Incomplete', 'Completed']
+    priority_options_filter = PRIORITY_OPTIONS
     all_owner_names = [st.session_state.users[uname]['name'] for uname in st.session_state.users.keys()]
 
 
@@ -1035,7 +1089,7 @@ def calendar_view():
             )
         
         st.markdown("---")
-        filter_cols_2 = st.columns(2)
+        filter_cols_2 = st.columns(3) # Increased columns to 3
         
         # Status Filter
         with filter_cols_2[0]:
@@ -1051,8 +1105,17 @@ def calendar_view():
             }
             cal_selected_statuses = [cal_is_completed_filter[s] for s in cal_selected_status_names]
 
-        # Owner Filter (Admin Only Feature)
+        # Priority Filter (NEW)
         with filter_cols_2[1]:
+            cal_selected_priorities = st.multiselect(
+                "Priority",
+                options=priority_options_filter,
+                default=priority_options_filter,
+                key='cal_priority_filter'
+            )
+
+        # Owner Filter (Admin Only Feature)
+        with filter_cols_2[2]:
             if is_admin:
                 # Admin can filter by any user
                 cal_selected_owner_names = st.multiselect(
@@ -1075,6 +1138,7 @@ def calendar_view():
         cal_selected_accounts = st.session_state.categories.get('accounts', [])
         cal_selected_campaigns = st.session_state.categories.get('campaigns', [])
         cal_selected_statuses = [False, True]
+        cal_selected_priorities = PRIORITY_OPTIONS
         cal_selected_owners = [current_username] if not is_admin else all_owner_usernames
     
     # --- 2. Apply Filters to Base Task List ---
@@ -1083,7 +1147,8 @@ def calendar_view():
         if task.get('account') in cal_selected_accounts and 
            task.get('campaign') in cal_selected_campaigns and
            task.get('is_completed') in cal_selected_statuses and
-           task.get('owner_id') in cal_selected_owners
+           task.get('owner_id') in cal_selected_owners and
+           task.get('priority') in cal_selected_priorities # NEW PRIORITY FILTER
     ]
     # --- End Apply Filters ---
 
@@ -1141,13 +1206,18 @@ def calendar_view():
             for t in tasks_due:
                 owner = get_user_name(t['owner_id']).split(' ')[0] 
                 status = "✅" if t['is_completed'] else "☐"
-                task_summary.append(f"{status} ({owner}): {t['title']}")
+                # NEW: Add Priority to summary help text
+                priority_symbol = "🔥" if t.get('priority') == 'High' else "🟡" if t.get('priority') == 'Medium' else "🧊"
+                task_summary.append(f"{priority_symbol} {status} ({owner}): {t['title']}")
 
             content = f'<div style="text-align: center; height: 100%; padding: 5px; {style}">'
             content += f'<span style="font-weight: bold; font-size: 16px;">{day_date.day}</span><br>'
             
             if tasks_due:
-                content += f'<span style="font-size: 12px; font-weight: bold; color: #10b981;">{len(tasks_due)} tasks</span>'
+                # NEW: Color based on highest priority due that day
+                highest_priority = min(PRIORITY_SORT_MAP.get(t.get('priority', 'Medium'), 2) for t in tasks_due)
+                color_for_day = PRIORITY_COLORS.get(PRIORITY_OPTIONS[highest_priority - 1], '#10b981')
+                content += f'<span style="font-size: 12px; font-weight: bold; color: {color_for_day};">{len(tasks_due)} tasks</span>'
             else:
                 content += '<span style="font-size: 10px; color: #9ca3af;">-</span>'
 
@@ -1253,6 +1323,7 @@ def main_app_content(name, username):
     # We are guaranteed to be authorized at this point (or redirected), so just execute the view.
     if view_selected in VIEWS:
         VIEWS[view_selected]()
+    # No 'else' needed here, eliminating the syntax error source.
 
 
 # --- MAIN ENTRY POINT ---
