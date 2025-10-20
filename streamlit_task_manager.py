@@ -1316,7 +1316,6 @@ def main_app_content(name, username):
     # We are guaranteed to be authorized at this point (or redirected), so just execute the view.
     if view_selected in VIEWS:
         VIEWS[view_selected]()
-    # No 'else' needed here, eliminating the syntax error source.
 
 
 # --- MAIN ENTRY POINT ---
