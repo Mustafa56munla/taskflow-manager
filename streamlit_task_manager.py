@@ -114,12 +114,12 @@ def load_tasks_from_db():
                 if task['id'].startswith('task_'):
                     try:
                         max_id = max(max_id, int(task['id'].split('_')[1]))
-                    except ValueError:
+                    except (ValueError, IndexError):
                         pass
             st.session_state.next_task_id = max_id + 1
             return tasks_from_db, False
         else:
-            st.session_state.next_task_id = 4
+            st.session_state.next_task_id = len(INITIAL_MOCK_TASKS) + 1
             return INITIAL_MOCK_TASKS, True
     except Exception as e:
         st.error(f"Failed to load tasks from Firestore: {e}")
@@ -196,7 +196,7 @@ def save_categories_to_db(categories_dict, context=""):
 
 # --- DATA SETUP ---
 
-def initialize_tasks():
+def initialize_data():
     if 'categories' not in st.session_state:
         categories_dict, is_mock_category_data = load_categories_from_db()
         st.session_state.categories = categories_dict
@@ -212,6 +212,7 @@ def initialize_tasks():
         st.session_state.tasks = tasks
         if is_mock_data:
             save_tasks_to_db(st.session_state.tasks)
+            st.toast("Initialized with mock tasks.")
 
     if 'editing_task_id' not in st.session_state:
         st.session_state.editing_task_id = None
@@ -226,12 +227,12 @@ def day_difference(date1, date2):
     return abs((date2 - date1).days)
 
 def is_task_due(task, target_date):
-    start_date = task['due_date']
-    if not start_date or target_date < start_date:
+    start_date = task.get('due_date')
+    if not start_date or not isinstance(start_date, date) or target_date < start_date:
         return False
     if target_date == start_date:
         return True
-    task_type = task['type']
+    task_type = task.get('type')
     if task_type == 'one-time': return False
     if task_type == 'daily': return True
     if task_type == 'weekly': return target_date.weekday() == start_date.weekday()
@@ -250,17 +251,12 @@ def get_next_occurrence(task, reference_date, days_limit=365):
 
 # --- UI COMPONENTS ---
 
-# --- MODIFIED: task_card now uses priority for styling ---
 def task_card(task, next_due_date, current_view, on_complete=None, index=None):
-    """Displays a single task card with actions, now color-coded by priority."""
+    """Displays a single task card with actions, color-coded by priority."""
     task_priority = task.get('priority', 'Medium')
     priority_color = PRIORITY_COLORS.get(task_priority, PRIORITY_COLORS['Medium'])
     
-    if task['is_completed']:
-        title_style = "text-decoration: line-through; color: #6b7280;"
-    else:
-        title_style = "color: #1f2937;"
-        
+    title_style = "text-decoration: line-through; color: #6b7280;" if task['is_completed'] else "color: #1f2937;"
     card_style = f"border-left: 5px solid {priority_color}; border-radius: 5px; padding: 10px; margin-bottom: 10px; background-color: #fafafa;"
     
     with st.container():
@@ -276,7 +272,6 @@ def task_card(task, next_due_date, current_view, on_complete=None, index=None):
         
         with col1:
             st.markdown(f'<div style="{title_style} font-weight: bold;">{task["title"]}</div>', unsafe_allow_html=True)
-            # --- NEW: Display priority in the caption ---
             context_text = f"**{task.get('account', 'N/A')}** / **{task.get('campaign', 'N/A')}** | Priority: **{task_priority}**"
             st.caption(f"{context_text} | Owned by: **{get_user_name(task['owner_id'])}**")
             
@@ -323,7 +318,6 @@ def update_task(task_id, new_data):
     st.session_state.editing_task_id = None
     st.rerun()
 
-# --- MODIFIED: edit_task_modal now includes a priority selector ---
 def edit_task_modal():
     task_id = st.session_state.editing_task_id
     if not task_id: return
@@ -344,7 +338,6 @@ def edit_task_modal():
         new_due_date = cols[0].date_input("Due/Start Date", value=current_due_date)
         new_task_type = cols[1].selectbox("Recurrence", TASK_TYPES, index=TASK_TYPES.index(task['type']))
         
-        # --- NEW: Priority selector for editing ---
         current_priority = task.get('priority', 'Medium')
         priority_index = PRIORITY_LEVELS.index(current_priority) if current_priority in PRIORITY_LEVELS else 1
         new_priority = cols[2].selectbox("Priority", PRIORITY_LEVELS, index=priority_index)
@@ -371,10 +364,9 @@ def edit_task_modal():
             update_task(task_id, {
                 'title': new_title, 'description': new_description, 'due_date': new_due_date,
                 'type': new_task_type, 'owner_id': assignee_id, 'account': new_account,
-                'campaign': new_campaign, 'priority': new_priority  # --- NEW: Save the updated priority
+                'campaign': new_campaign, 'priority': new_priority
             })
 
-# --- MODIFIED: add_task_form now includes a priority selector ---
 def add_task_form():
     is_admin = st.session_state.users[st.session_state.username]['role'] == 'admin'
     if st.session_state.editing_task_id is None:
@@ -386,8 +378,7 @@ def add_task_form():
                 cols = st.columns(3)
                 due_date = cols[0].date_input("Due/Start Date", value=datetime.now().date())
                 task_type = cols[1].selectbox("Recurrence", TASK_TYPES)
-                # --- NEW: Priority selector for new tasks ---
-                priority = cols[2].selectbox("Priority", PRIORITY_LEVELS, index=1) # Default to Medium
+                priority = cols[2].selectbox("Priority", PRIORITY_LEVELS, index=1) 
 
                 cols_context = st.columns(2)
                 new_account = cols_context[0].selectbox("Account", st.session_state.categories.get('accounts', []))
@@ -396,7 +387,8 @@ def add_task_form():
                 assignee_id = st.session_state.username
                 if is_admin:
                     all_user_names = [d['name'] for d in st.session_state.users.values()]
-                    selected_assignee_name = st.selectbox("Assignee", all_user_names, index=all_user_names.index(st.session_state.name))
+                    current_user_name = st.session_state.users[st.session_state.username]['name']
+                    selected_assignee_name = st.selectbox("Assignee", all_user_names, index=all_user_names.index(current_user_name))
                     assignee_id = next(u for u, d in st.session_state.users.items() if d['name'] == selected_assignee_name)
                 
                 if st.form_submit_button("Save Task", type="primary"):
@@ -407,7 +399,7 @@ def add_task_form():
                             'id': new_id, 'title': title, 'description': description,
                             'due_date': due_date, 'type': task_type, 'owner_id': assignee_id,
                             'is_completed': False, 'account': new_account, 'campaign': new_campaign,
-                            'priority': priority  # --- NEW: Add priority to new task data
+                            'priority': priority
                         })
                         save_tasks_to_db(st.session_state.tasks)
                         st.success(f"Task '{title}' added!")
@@ -418,13 +410,13 @@ def add_task_form():
 def category_management_form():
     if st.session_state.users[st.session_state.username]['role'] == 'admin':
         with st.expander("📁 Manage Categories (Admin)"):
-            current_accounts = ", ".join(st.session_state.categories['accounts'])
+            current_accounts = ", ".join(st.session_state.categories.get('accounts', []))
             new_accounts = st.text_area("Accounts (comma-separated)", current_accounts)
-            current_campaigns = ", ".join(st.session_state.categories['campaigns'])
+            current_campaigns = ", ".join(st.session_state.categories.get('campaigns', []))
             new_campaigns = st.text_area("Campaigns (comma-separated)", current_campaigns)
             if st.button("Save Categories"):
-                st.session_state.categories['accounts'] = [a.strip() for a in new_accounts.split(',')]
-                st.session_state.categories['campaigns'] = [c.strip() for c in new_campaigns.split(',')]
+                st.session_state.categories['accounts'] = [a.strip() for a in new_accounts.split(',') if a.strip()]
+                st.session_state.categories['campaigns'] = [c.strip() for c in new_campaigns.split(',') if c.strip()]
                 save_categories_to_db(st.session_state.categories, "admin update")
                 st.success("Categories saved!")
                 st.rerun()
@@ -432,11 +424,10 @@ def category_management_form():
 def admin_user_control_page():
     st.title("👤 User Management")
     st.dataframe([{'Username': u, **d} for u, d in st.session_state.users.items()], use_container_width=True)
-    # Add/Edit/Delete user forms can be placed here as in your original code
+    # You can add your detailed Add/Edit/Delete user forms here if needed
 
 # --- VIEWS ---
 
-# --- MODIFIED: dashboard_view now includes sorting by priority ---
 def dashboard_view():
     st.subheader("Actionable Summary")
     today = datetime.now().date()
@@ -450,10 +441,9 @@ def dashboard_view():
         selected_statuses_str = filter_cols[2].multiselect("Status", ['Incomplete', 'Completed'], default=['Incomplete'])
         selected_statuses = [s == 'Completed' for s in selected_statuses_str]
         
-        # --- NEW: Added 'Priority' to sorting options ---
         sort_by = st.selectbox("Sort By", ['Due Date', 'Title', 'Priority'])
 
-    base_tasks_to_filter = st.session_state.tasks if is_admin else [t for t in st.session_state.tasks if t['owner_id'] == current_username]
+    base_tasks_to_filter = st.session_state.tasks
     
     filtered_tasks = [
         t for t in base_tasks_to_filter if
@@ -462,18 +452,18 @@ def dashboard_view():
         t.get('is_completed') in selected_statuses
     ]
     
-    tasks_with_next_date = [{'next_due_date': get_next_occurrence(t, today), **t} for t in filtered_tasks]
-    tasks_with_next_date = [t for t in tasks_with_next_date if t['next_due_date']]
+    user_filtered_tasks = filtered_tasks if is_admin else [t for t in filtered_tasks if t['owner_id'] == current_username]
 
-    # --- NEW: Logic to handle sorting by priority (High to Low) ---
+    tasks_with_next_date = [{'next_due_date': get_next_occurrence(t, today), **t} for t in user_filtered_tasks]
+    tasks_with_next_date = [t for t in tasks_with_next_date if t.get('next_due_date')]
+
     reverse_sort = False
     if sort_by == 'Due Date':
         sort_key = lambda x: x['next_due_date']
     elif sort_by == 'Priority':
-        # Sorts by the index in PRIORITY_LEVELS ('Low': 0, 'Medium': 1, 'High': 2)
         sort_key = lambda x: PRIORITY_LEVELS.index(x.get('priority', 'Medium'))
-        reverse_sort = True  # Reverse to get High priority first
-    else:  # Title
+        reverse_sort = True
+    else:
         sort_key = lambda x: x['title']
         
     sorted_tasks = sorted(tasks_with_next_date, key=sort_key, reverse=reverse_sort)
@@ -503,16 +493,77 @@ def dashboard_view():
     else:
         st.info("No upcoming tasks this week.")
 
+# --- FULL CALENDAR VIEW ---
 def calendar_view():
     st.subheader("Monthly Calendar")
-    # Calendar view logic remains the same
-    # ...
+    current_username = st.session_state.username
+    is_admin = st.session_state.users[current_username]['role'] == 'admin'
+
+    view_filter = 'My Tasks'
+    if is_admin:
+        view_filter = st.radio("Calendar View", ('All Team Tasks', 'My Tasks'), horizontal=True, key='cal_view_filter')
+    
+    tasks_to_check = st.session_state.tasks if view_filter == 'All Team Tasks' else [t for t in st.session_state.tasks if t['owner_id'] == current_username]
+
+    if 'calendar_date' not in st.session_state:
+        st.session_state.calendar_date = datetime.now().date()
+
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col1:
+        if st.button("← Previous Month"):
+            st.session_state.calendar_date = (st.session_state.calendar_date.replace(day=1) - timedelta(days=1)).replace(day=1)
+            st.rerun()
+    with col2:
+        st.markdown(f"<h3 style='text-align: center;'>{st.session_state.calendar_date.strftime('%B %Y')}</h3>", unsafe_allow_html=True)
+    with col3:
+        if st.button("Next Month →"):
+            st.session_state.calendar_date = (st.session_state.calendar_date.replace(day=28) + timedelta(days=4)).replace(day=1)
+            st.rerun()
+            
+    st.markdown("---")
+
+    cal = calendar.Calendar(firstweekday=calendar.MONDAY)
+    month_days = cal.monthdatescalendar(st.session_state.calendar_date.year, st.session_state.calendar_date.month)
+    days_names = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+    
+    cols = st.columns(7)
+    for i, day_name in enumerate(days_names):
+        cols[i].markdown(f"**<div style='text-align:center;'>{day_name}</div>**", unsafe_allow_html=True)
+
+    for week in month_days:
+        cols = st.columns(7)
+        for i, day_date in enumerate(week):
+            tasks_due = [t for t in tasks_to_check if is_task_due(t, day_date)]
+            
+            is_current_month = day_date.month == st.session_state.calendar_date.month
+            is_today = day_date == datetime.now().date()
+            
+            style = "padding: 10px; height: 120px; border-radius: 5px;"
+            if is_today:
+                style += "background-color: #e0f2fe;"
+            elif not is_current_month:
+                style += "background-color: #f8fafc;"
+            
+            with cols[i]:
+                st.markdown(f"<div style='{style}'>", unsafe_allow_html=True)
+                day_style = "font-weight: bold;" if not is_current_month else "font-weight: bold; color: black;"
+                st.markdown(f"<div style='{day_style}'>{day_date.day}</div>", unsafe_allow_html=True)
+
+                for task in tasks_due[:2]: # Show max 2 tasks
+                    owner_initials = get_user_name(task['owner_id'])[0]
+                    task_color = PRIORITY_COLORS.get(task.get('priority', 'Medium'))
+                    st.markdown(f"<div style='font-size: 0.8em; background-color: {task_color}; color: white; border-radius: 3px; padding: 2px 4px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' title='{task['title']} ({owner_initials})'>{task['title']}</div>", unsafe_allow_html=True)
+                
+                if len(tasks_due) > 2:
+                    st.markdown(f"<div style='font-size: 0.7em; text-align: center; margin-top: 5px;'>+ {len(tasks_due) - 2} more</div>", unsafe_allow_html=True)
+
+                st.markdown("</div>", unsafe_allow_html=True)
 
 # --- MAIN APP ---
 
 def main_app_content(name, username):
     st.title("TaskFlow Manager")
-    initialize_tasks()
+    initialize_data()
     current_user = st.session_state.users[username]
     
     with st.sidebar:
@@ -520,23 +571,30 @@ def main_app_content(name, username):
         view_options = ['Dashboard', 'Calendar']
         if current_user['role'] == 'admin':
             view_options.append('User Management')
-        view = st.radio("Select View", view_options, key='view_selection')
+        
+        # Use session state to keep the view consistent
+        if 'view' not in st.session_state:
+            st.session_state.view = 'Dashboard'
+
+        view = st.radio("Select View", view_options, key='view_selection', on_change=lambda: st.session_state.update(view=st.session_state.view_selection))
+        
         st.info(f"User: **{name}** ({current_user['role']})")
         st.button("Logout", on_click=logout)
 
-    if view in ['Dashboard', 'Calendar']:
+    if st.session_state.view in ['Dashboard', 'Calendar']:
         if current_user['role'] == 'admin':
             category_management_form()
         if st.session_state.editing_task_id:
             edit_task_modal()
-        add_task_form()
+        else:
+            add_task_form()
         st.markdown("---")
 
-    if view == 'Dashboard':
+    if st.session_state.view == 'Dashboard':
         dashboard_view()
-    elif view == 'Calendar':
+    elif st.session_state.view == 'Calendar':
         calendar_view()
-    elif view == 'User Management' and current_user['role'] == 'admin':
+    elif st.session_state.view == 'User Management' and current_user['role'] == 'admin':
         admin_user_control_page()
 
 def main():
@@ -554,7 +612,7 @@ def main():
             pin = st.text_input("PIN", type="password")
             if st.form_submit_button("Sign In", type="primary"):
                 if email and pin:
-                    load_users_from_db()  # Load fresh user data before auth
+                    load_users_from_db()
                     authenticate_user(email, pin)
                 else:
                     st.error("Please enter email and PIN.")
