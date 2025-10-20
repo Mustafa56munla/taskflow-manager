@@ -933,7 +933,7 @@ def dashboard_view():
                 key='dash_sort_select'
             )
         
-    else:
+        else:
         # Default filters if the expander is closed or not available
         selected_accounts = st.session_state.categories.get('accounts', [])
         selected_campaigns = st.session_state.categories.get('campaigns', [])
