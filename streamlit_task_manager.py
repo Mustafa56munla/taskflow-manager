@@ -933,7 +933,7 @@ def dashboard_view():
                 key='dash_sort_select'
             )
         
-        else:
+    else:
         # Default filters if the expander is closed or not available
         selected_accounts = st.session_state.categories.get('accounts', [])
         selected_campaigns = st.session_state.categories.get('campaigns', [])
@@ -1316,6 +1316,9 @@ def main_app_content(name, username):
     # We are guaranteed to be authorized at this point (or redirected), so just execute the view.
     if view_selected in VIEWS:
         VIEWS[view_selected]()
+    
+    # Defensive return statement to ensure clean function termination
+    return
 
 
 # --- MAIN ENTRY POINT ---
