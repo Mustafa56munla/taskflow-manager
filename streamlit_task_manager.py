@@ -111,7 +111,7 @@ def initialize_firebase():
             st.stop()
     # Ensure client is available in session state after initialization
     if 'db' not in st.session_state:
-         st.session_state.db = firestore.client()
+        st.session_state.db = firestore.client()
 
 # --- DATA STORAGE (PERSISTENT - FIRESTORE) ---
 
@@ -190,7 +190,7 @@ def save_tasks_to_db(tasks):
         
         # 3. Handle missing/invalid values (set to None)
         elif due_date_value is None or (isinstance(due_date_value, str) and not due_date_value):
-             task_copy['due_date'] = None
+            task_copy['due_date'] = None
         
         # 4. Catch-all: If it's none of the above, it's corrupt data; set to None.
         else:
@@ -242,7 +242,7 @@ def save_users_to_db(users_dict, context=""):
         db.document(USER_DOC_REF).set({'users': users_dict})
         # FIX: Adding success logging to confirm write operation
         if context:
-             st.toast(f"User data saved successfully after {context}.")
+            st.toast(f"User data saved successfully after {context}.")
     except Exception as e:
         # FIX: Provide context on failure
         st.error(f"Failed to save users to Firestore (Context: {context}): {e}")
@@ -278,7 +278,7 @@ def save_categories_to_db(categories_dict, context=""):
     try:
         db.document(CATEGORY_DOC_REF).set(categories_dict)
         if context:
-             st.toast(f"Category data saved successfully after {context}.")
+            st.toast(f"Category data saved successfully after {context}.")
     except Exception as e:
         st.error(f"Failed to save categories to Firestore (Context: {context}): {e}")
 
@@ -506,7 +506,7 @@ def edit_task_modal():
             new_task_type = st.selectbox("Recurrence", TASK_TYPES, index=type_index)
         with cols[2]:
             # NEW PRIORITY FIELD
-            priority_index = PRIORITY_OPTIONS.index(task.get('priority', 'Medium'))
+            priority_index = PRIORITY_OPTIONS.index(task.get('priority', 'Medium')) if task.get('priority', 'Medium') in PRIORITY_OPTIONS else 1
             new_priority = st.selectbox("Priority", PRIORITY_OPTIONS, index=priority_index)
         
         # NEW: Account and Campaign Selection
@@ -645,7 +645,7 @@ def add_task_form():
                     save_tasks_to_db(st.session_state.tasks) # Call save after modifying
                     st.success(f"Task '{title}' added and assigned to {get_user_name(assignee_id)}!")
                 elif submitted and not title:
-                     st.error("Task title cannot be empty.")
+                    st.error("Task title cannot be empty.")
 
 # --- ADMIN CATEGORY MANAGEMENT FORM ---
 
@@ -776,7 +776,7 @@ def admin_user_control_page():
             
             col3, col4 = st.columns(2)
             with col3:
-                role_index = ['user', 'admin'].index(user_to_edit['role'])
+                role_index = ['user', 'admin'].index(user_to_edit['role']) if user_to_edit['role'] in ['user', 'admin'] else 0
                 # FIX: Role is correctly loaded using the current user's role index
                 edited_role = st.selectbox("Role", ['user', 'admin'], index=role_index, key=f"edit_role_{user_to_edit_username}")
             with col4:
@@ -843,7 +843,8 @@ def dashboard_view():
     is_admin = current_user_info['role'] == 'admin'
     
     # Base list: filter to only show tasks owned by the current user
-    user_tasks = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
+    # Note: This is an unused variable if Admin filter is active. Logic is consolidated below.
+    # user_tasks = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
     
     # --- 1. Filter Widgets ---
     account_options = st.session_state.categories.get('accounts', [])
@@ -945,13 +946,9 @@ def dashboard_view():
     
     # --- 2. Apply Filters ---
     
-    # Determine the base list based on role (Admin sees ALL tasks, User sees ONLY their tasks)
-    # The calendar filter radio button is only visible to Admin, so check its state if Admin.
-    if is_admin and st.session_state.get('calendar_filter_radio') == 'All Team Tasks':
-        base_tasks_to_filter = st.session_state.tasks
-    else:
-        # If not admin, or admin is on 'My Tasks' view, filter by current user
-        base_tasks_to_filter = [task for task in st.session_state.tasks if task['owner_id'] == current_username]
+    # Determine the base list based on role (Admin sees ALL tasks if viewing All Team Tasks in Calendar view, otherwise, filter by current user)
+    # The dashboard view *always* defaults to the user's tasks unless an admin manually selects other owners in the filter.
+    base_tasks_to_filter = st.session_state.tasks
 
 
     filtered_tasks = [
@@ -1020,14 +1017,14 @@ def dashboard_view():
 
     st.markdown("---")
     
-    st.markdown("### 📝 All My Tasks")
+    st.markdown("### 📝 All Filtered Tasks")
     if all_user_tasks:
         for index, task in enumerate(all_user_tasks):
             # We pass 'All My Tasks' as the current_view but still pass toggle_task_completion
             # to task_card. The card logic handles which buttons to show.
             task_card(task, task['next_due_date'], "All My Tasks", toggle_task_completion, index=index) 
     else:
-        st.warning(f"{get_user_name(current_username)} has no tasks saved yet. Add one above!")
+        st.warning(f"No tasks match the current filter criteria.")
 
 
 def calendar_view():
@@ -1043,7 +1040,7 @@ def calendar_view():
     if is_admin:
         # Use session state to persist the filter choice
         if 'calendar_filter_radio' not in st.session_state:
-             st.session_state.calendar_filter_radio = 'My Tasks'
+            st.session_state.calendar_filter_radio = 'My Tasks'
 
         view_filter = st.radio(
             "Calendar View Filter",
@@ -1134,12 +1131,8 @@ def calendar_view():
                 st.caption("Owner filter restricted to your tasks.")
     
     # Default filters if the expander is not used
-    if not (account_options or campaign_options):
-        cal_selected_accounts = st.session_state.categories.get('accounts', [])
-        cal_selected_campaigns = st.session_state.categories.get('campaigns', [])
-        cal_selected_statuses = [False, True]
-        cal_selected_priorities = PRIORITY_OPTIONS
-        cal_selected_owners = [current_username] if not is_admin else all_owner_usernames
+    # This block is not necessary as filters have defaults set above if the expander is present.
+    # We will trust the multiselect defaults for a simpler implementation.
     
     # --- 2. Apply Filters to Base Task List ---
     tasks_to_check = [
@@ -1275,8 +1268,8 @@ def main_app_content(name, username):
         
         # Admin Tools Header and Code Viewer
         if current_user['role'] == 'admin':
-             st.subheader("Admin Tools")
-             with st.expander("🛠️ Developer Tools"):
+            st.subheader("Admin Tools")
+            with st.expander("🛠️ Developer Tools"):
                 st.code(
                     """
                     # Core Task Functions
