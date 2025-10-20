@@ -111,7 +111,7 @@ def load_tasks_from_db():
             for task in tasks_from_db:
                 if task.get('due_date') and hasattr(task['due_date'], 'date'):
                     task['due_date'] = task['due_date'].date()
-                if task['id'].startswith('task_'):
+                if task.get('id', '').startswith('task_'):
                     try:
                         max_id = max(max_id, int(task['id'].split('_')[1]))
                     except (ValueError, IndexError):
@@ -336,7 +336,7 @@ def edit_task_modal():
         cols = st.columns(3)
         current_due_date = task['due_date'] if isinstance(task['due_date'], (datetime, date)) else datetime.now().date()
         new_due_date = cols[0].date_input("Due/Start Date", value=current_due_date)
-        new_task_type = cols[1].selectbox("Recurrence", TASK_TYPES, index=TASK_TYPES.index(task['type']))
+        new_task_type = cols[1].selectbox("Recurrence", TASK_TYPES, index=TASK_TYPES.index(task.get('type', 'one-time')))
         
         current_priority = task.get('priority', 'Medium')
         priority_index = PRIORITY_LEVELS.index(current_priority) if current_priority in PRIORITY_LEVELS else 1
@@ -438,7 +438,7 @@ def dashboard_view():
         filter_cols = st.columns(3)
         selected_accounts = filter_cols[0].multiselect("Accounts", st.session_state.categories.get('accounts', []), default=st.session_state.categories.get('accounts', []))
         selected_campaigns = filter_cols[1].multiselect("Campaigns", st.session_state.categories.get('campaigns', []), default=st.session_state.categories.get('campaigns', []))
-        selected_statuses_str = filter_cols[2].multiselect("Status", ['Incomplete', 'Completed'], default=['Incomplete'])
+        selected_statuses_str = filter_cols[2].multiselect("Status", ['Incomplete', 'Completed'], default=['Incomplete', 'Completed'])
         selected_statuses = [s == 'Completed' for s in selected_statuses_str]
         
         sort_by = st.selectbox("Sort By", ['Due Date', 'Title', 'Priority'])
@@ -486,6 +486,7 @@ def dashboard_view():
     else:
         st.info("No tasks due today!")
 
+    st.markdown("---")
     st.markdown("### 🗓️ Upcoming (Next 7 Days)")
     if tasks_upcoming:
         for i, task in enumerate(tasks_upcoming):
@@ -493,7 +494,17 @@ def dashboard_view():
     else:
         st.info("No upcoming tasks this week.")
 
-# --- FULL CALENDAR VIEW ---
+    # --- NEW: "All My Tasks" Section ---
+    st.markdown("---")
+    st.markdown("### 📝 All My Tasks")
+    if sorted_tasks:
+        for i, task in enumerate(sorted_tasks):
+            # The "All My Tasks" view is non-actionable for completion, so the card will show delete/edit
+            task_card(task, task['next_due_date'], "All My Tasks", on_complete=toggle_task_completion, index=i)
+    else:
+        st.warning("No tasks match the current filters.")
+
+
 def calendar_view():
     st.subheader("Monthly Calendar")
     current_username = st.session_state.username
@@ -538,26 +549,19 @@ def calendar_view():
             is_current_month = day_date.month == st.session_state.calendar_date.month
             is_today = day_date == datetime.now().date()
             
-            style = "padding: 10px; height: 120px; border-radius: 5px;"
-            if is_today:
-                style += "background-color: #e0f2fe;"
-            elif not is_current_month:
-                style += "background-color: #f8fafc;"
+            day_html = f"<div style='padding: 10px; height: 120px; border-radius: 5px; background-color: {'#e0f2fe' if is_today else ('#f8fafc' if not is_current_month else 'white')};'>"
+            day_html += f"<div style='font-weight: bold; color: {'#9ca3af' if not is_current_month else 'black'};'>{day_date.day}</div>"
+
+            for task in tasks_due[:2]: # Show max 2 tasks
+                owner_initials = get_user_name(task['owner_id'])[0]
+                task_color = PRIORITY_COLORS.get(task.get('priority', 'Medium'))
+                day_html += f"<div style='font-size: 0.8em; background-color: {task_color}; color: white; border-radius: 3px; padding: 2px 4px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' title='{task['title']} ({owner_initials})'>{task['title']}</div>"
             
-            with cols[i]:
-                st.markdown(f"<div style='{style}'>", unsafe_allow_html=True)
-                day_style = "font-weight: bold;" if not is_current_month else "font-weight: bold; color: black;"
-                st.markdown(f"<div style='{day_style}'>{day_date.day}</div>", unsafe_allow_html=True)
+            if len(tasks_due) > 2:
+                day_html += f"<div style='font-size: 0.7em; text-align: center; margin-top: 5px;'>+ {len(tasks_due) - 2} more</div>"
 
-                for task in tasks_due[:2]: # Show max 2 tasks
-                    owner_initials = get_user_name(task['owner_id'])[0]
-                    task_color = PRIORITY_COLORS.get(task.get('priority', 'Medium'))
-                    st.markdown(f"<div style='font-size: 0.8em; background-color: {task_color}; color: white; border-radius: 3px; padding: 2px 4px; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;' title='{task['title']} ({owner_initials})'>{task['title']}</div>", unsafe_allow_html=True)
-                
-                if len(tasks_due) > 2:
-                    st.markdown(f"<div style='font-size: 0.7em; text-align: center; margin-top: 5px;'>+ {len(tasks_due) - 2} more</div>", unsafe_allow_html=True)
-
-                st.markdown("</div>", unsafe_allow_html=True)
+            day_html += "</div>"
+            cols[i].markdown(day_html, unsafe_allow_html=True)
 
 # --- MAIN APP ---
 
@@ -572,11 +576,14 @@ def main_app_content(name, username):
         if current_user['role'] == 'admin':
             view_options.append('User Management')
         
-        # Use session state to keep the view consistent
         if 'view' not in st.session_state:
             st.session_state.view = 'Dashboard'
 
-        view = st.radio("Select View", view_options, key='view_selection', on_change=lambda: st.session_state.update(view=st.session_state.view_selection))
+        # This setup ensures the view persists across reruns
+        def set_view():
+            st.session_state.view = st.session_state.view_selection
+        
+        st.radio("Select View", view_options, key='view_selection', on_change=set_view, index=view_options.index(st.session_state.view))
         
         st.info(f"User: **{name}** ({current_user['role']})")
         st.button("Logout", on_click=logout)
@@ -601,8 +608,9 @@ def main():
     st.set_page_config(layout="wide", page_title="TaskFlow Manager")
     if 'login_status' not in st.session_state:
         st.session_state.login_status = False
+        st.session_state.users = {} # Start with empty users before loading
 
-    if st.session_state.login_status:
+    if st.session_state.login_status and st.session_state.username in st.session_state.users:
         main_app_content(st.session_state.name, st.session_state.username)
     else:
         st.title("Welcome to TaskFlow Manager")
